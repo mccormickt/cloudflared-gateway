@@ -13,9 +13,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/manager/signals"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gwapiv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
 )
-
-const defaultNamespace = "default"
 
 var scheme = runtime.NewScheme()
 
@@ -23,6 +22,7 @@ func init() {
 	log.SetLogger(zap.New())
 	clientgoscheme.AddToScheme(scheme)
 	gwapiv1.AddToScheme(scheme)
+	gwapiv1alpha2.AddToScheme(scheme)
 }
 
 func main() {
@@ -40,7 +40,7 @@ func main() {
 	}
 
 	logger.Info("Setting up controller")
-	err = ctrl.NewGatewayAPIController(mgr, defaultNamespace)
+	err = ctrl.NewGatewayAPIController(mgr)
 	if err != nil {
 		logger.Error(err, "Error creating controller")
 		os.Exit(1)
