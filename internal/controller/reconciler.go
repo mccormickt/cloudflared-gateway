@@ -3,7 +3,6 @@ package controller
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	cf "github.com/cloudflare/cloudflare-go"
 	cfclient "github.com/mccormickt/cloudflare-tunnel-controller/internal/cloudflare"
@@ -20,7 +19,22 @@ import (
 	gwapiv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
 )
 
+// Reconcile is the error-policy wrapper. Permanent errors are logged and not
+// retried; retriable errors are returned so controller-runtime requeues with
+// exponential backoff.
 func (r *tunnelReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
+	result, err := r.reconcile(ctx, req)
+	if err != nil {
+		if IsPermanent(err) {
+			log.FromContext(ctx).Error(err, "Permanent error, will not retry")
+			return reconcile.Result{}, nil
+		}
+		return reconcile.Result{}, err
+	}
+	return result, nil
+}
+
+func (r *tunnelReconciler) reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
 	logger := log.FromContext(ctx).WithValues("gateway", req.NamespacedName)
 	ctx = log.IntoContext(ctx, logger)
 	logger.Info("Reconciling Gateway")
@@ -31,7 +45,7 @@ func (r *tunnelReconciler) Reconcile(ctx context.Context, req reconcile.Request)
 		if apierrors.IsNotFound(err) {
 			return reconcile.Result{}, nil
 		}
-		return reconcile.Result{}, fmt.Errorf("fetching Gateway: %w", err)
+		return reconcile.Result{}, KubeError(err)
 	}
 
 	// 2. Validate GatewayClass — must happen before finalizer to avoid claiming other controllers' Gateways
@@ -40,7 +54,7 @@ func (r *tunnelReconciler) Reconcile(ctx context.Context, req reconcile.Request)
 		if apierrors.IsNotFound(err) {
 			return reconcile.Result{}, nil
 		}
-		return reconcile.Result{}, fmt.Errorf("fetching GatewayClass: %w", err)
+		return reconcile.Result{}, KubeError(err)
 	}
 	if gc.Spec.ControllerName != r.controllerName {
 		return reconcile.Result{}, nil
@@ -54,7 +68,7 @@ func (r *tunnelReconciler) Reconcile(ctx context.Context, req reconcile.Request)
 			}
 			controllerutil.RemoveFinalizer(&gw, finalizerName)
 			if err := r.client.Update(ctx, &gw); err != nil {
-				return reconcile.Result{}, fmt.Errorf("removing finalizer: %w", err)
+				return reconcile.Result{}, FinalizerError(err)
 			}
 		}
 		return reconcile.Result{}, nil
@@ -63,7 +77,7 @@ func (r *tunnelReconciler) Reconcile(ctx context.Context, req reconcile.Request)
 	if !controllerutil.ContainsFinalizer(&gw, finalizerName) {
 		controllerutil.AddFinalizer(&gw, finalizerName)
 		if err := r.client.Update(ctx, &gw); err != nil {
-			return reconcile.Result{}, fmt.Errorf("adding finalizer: %w", err)
+			return reconcile.Result{}, FinalizerError(err)
 		}
 	}
 
@@ -78,6 +92,10 @@ func (r *tunnelReconciler) Reconcile(ctx context.Context, req reconcile.Request)
 func (r *tunnelReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *gwapiv1.GatewayClass) error {
 	logger := log.FromContext(ctx)
 
+	if gw.UID == "" {
+		return ConfigError("Gateway has no UID")
+	}
+
 	// Set GatewayClass Accepted status
 	if err := PatchGatewayClassStatus(ctx, r.client, gc, true); err != nil {
 		logger.Error(err, "Failed to patch GatewayClass status")
@@ -86,20 +104,19 @@ func (r *tunnelReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *g
 	// Ensure tunnel secret
 	secret, regenerated, err := EnsureTunnelSecret(ctx, r.client, gw)
 	if err != nil {
-		return fmt.Errorf("ensuring tunnel secret: %w", err)
+		return KubeError(err)
 	}
 
 	// Get or create tunnel
 	tunnel, err := r.cloudflare.GetTunnelByName(ctx, gw.Name)
 	if err != nil {
-		return fmt.Errorf("getting tunnel: %w", err)
+		return CloudflareError(err)
 	}
 
 	if tunnel != nil && regenerated {
-		// Secret was regenerated — delete and recreate tunnel
 		logger.Info("Secret regenerated, recreating tunnel", "tunnel_id", tunnel.ID)
 		if err := r.cloudflare.DeleteTunnel(ctx, tunnel.ID); err != nil {
-			return fmt.Errorf("deleting tunnel for recreation: %w", err)
+			return CloudflareError(err)
 		}
 		tunnel = nil
 	}
@@ -107,7 +124,7 @@ func (r *tunnelReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *g
 	if tunnel == nil {
 		created, err := r.cloudflare.CreateTunnel(ctx, gw.Name, secret)
 		if err != nil {
-			return fmt.Errorf("creating tunnel: %w", err)
+			return CloudflareError(err)
 		}
 		tunnel = &created
 		logger.Info("Created tunnel", "tunnel_id", tunnel.ID)
@@ -117,36 +134,35 @@ func (r *tunnelReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *g
 	token := cfclient.BuildTunnelToken(r.cloudflare.AccountID(), tunnel.ID, secret)
 	secretName := TunnelSecretName(gw.Name)
 	if err := StoreTunnelToken(ctx, r.client, gw.Namespace, secretName, token); err != nil {
-		return fmt.Errorf("storing tunnel token: %w", err)
+		return KubeError(err)
 	}
 
 	// Apply cloudflared deployment
 	deployment := BuildCloudflaredDeployment(gw, secretName)
 	if err := r.applyDeployment(ctx, deployment); err != nil {
-		return fmt.Errorf("applying deployment: %w", err)
+		return KubeError(err)
 	}
 
 	// Collect attached routes
 	httpRoutes, err := r.collectHTTPRoutes(ctx, gw)
 	if err != nil {
-		return fmt.Errorf("collecting HTTPRoutes: %w", err)
+		return KubeError(err)
 	}
 
 	tlsRoutes, err := r.collectTLSRoutes(ctx, gw)
 	if err != nil {
-		return fmt.Errorf("collecting TLSRoutes: %w", err)
+		return KubeError(err)
 	}
 
 	// Build ingress rules
 	var ingress []cf.UnvalidatedIngressRule
 	ingress = append(ingress, cfclient.BuildIngressRules(httpRoutes)...)
 	ingress = append(ingress, cfclient.BuildTLSIngressRules(tlsRoutes)...)
-	// Catch-all 404
 	ingress = append(ingress, cf.UnvalidatedIngressRule{Service: "http_status:404"})
 
 	// Push config
 	if err := r.cloudflare.UpdateTunnelConfiguration(ctx, tunnel.ID, ingress); err != nil {
-		return fmt.Errorf("updating tunnel config: %w", err)
+		return CloudflareError(err)
 	}
 	logger.Info("Pushed tunnel config", "rules", len(ingress))
 
@@ -175,7 +191,6 @@ func (r *tunnelReconciler) cleanup(ctx context.Context, gw *gwapiv1.Gateway) err
 	logger := log.FromContext(ctx)
 	var firstErr error
 
-	// Delete tunnel
 	tunnel, err := r.cloudflare.GetTunnelByName(ctx, gw.Name)
 	if err != nil {
 		logger.Error(err, "Cleanup: failed to get tunnel")
@@ -193,7 +208,6 @@ func (r *tunnelReconciler) cleanup(ctx context.Context, gw *gwapiv1.Gateway) err
 		}
 	}
 
-	// Delete deployment
 	deployName := DeploymentName(gw.Name)
 	var deploy appsv1.Deployment
 	if err := r.client.Get(ctx, types.NamespacedName{Name: deployName, Namespace: gw.Namespace}, &deploy); err != nil {
@@ -214,7 +228,6 @@ func (r *tunnelReconciler) cleanup(ctx context.Context, gw *gwapiv1.Gateway) err
 		}
 	}
 
-	// Delete secret
 	secretName := TunnelSecretName(gw.Name)
 	var secret v1.Secret
 	if err := r.client.Get(ctx, types.NamespacedName{Name: secretName, Namespace: gw.Namespace}, &secret); err != nil {
@@ -248,7 +261,6 @@ func (r *tunnelReconciler) applyDeployment(ctx context.Context, desired *appsv1.
 		return err
 	}
 
-	// Update existing deployment
 	existing.Spec = desired.Spec
 	existing.Labels = desired.Labels
 	return r.client.Update(ctx, &existing)
@@ -265,7 +277,11 @@ func (r *tunnelReconciler) collectHTTPRoutes(ctx context.Context, gw *gwapiv1.Ga
 		if !routeReferencesGateway(route.Spec.ParentRefs, gw) {
 			continue
 		}
-		if !CheckRouteAttachment(gw, route.Namespace, "HTTPRoute") {
+		allowed, err := CheckRouteAttachment(ctx, r.client, gw, route.Namespace, "HTTPRoute")
+		if err != nil {
+			return nil, err
+		}
+		if !allowed {
 			continue
 		}
 		attached = append(attached, route)
@@ -277,7 +293,6 @@ func (r *tunnelReconciler) collectTLSRoutes(ctx context.Context, gw *gwapiv1.Gat
 	var routeList gwapiv1alpha2.TLSRouteList
 	if err := r.client.List(ctx, &routeList); err != nil {
 		if apierrors.IsNotFound(err) || isNoMatchError(err) {
-			// TLSRoute CRD not installed
 			return nil, nil
 		}
 		return nil, err
@@ -288,7 +303,11 @@ func (r *tunnelReconciler) collectTLSRoutes(ctx context.Context, gw *gwapiv1.Gat
 		if !routeReferencesGateway(route.Spec.ParentRefs, gw) {
 			continue
 		}
-		if !CheckRouteAttachment(gw, route.Namespace, "TLSRoute") {
+		allowed, err := CheckRouteAttachment(ctx, r.client, gw, route.Namespace, "TLSRoute")
+		if err != nil {
+			return nil, err
+		}
+		if !allowed {
 			continue
 		}
 		attached = append(attached, route)
@@ -344,8 +363,6 @@ func computeListenerCounts(gw *gwapiv1.Gateway, httpRoutes []gwapiv1.HTTPRoute, 
 	return counts
 }
 
-// isNoMatchError checks if the error is a "no matches for kind" API discovery error,
-// indicating the CRD is not installed.
 func isNoMatchError(err error) bool {
 	if err == nil {
 		return false

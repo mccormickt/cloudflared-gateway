@@ -1,37 +1,41 @@
 package controller
 
 import (
+	"context"
+
+	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
 // CheckRouteAttachment checks whether a route in the given namespace with the
 // given kind is allowed to attach to the Gateway based on its listener configuration.
-func CheckRouteAttachment(gw *gwapiv1.Gateway, routeNS, routeKind string) bool {
+func CheckRouteAttachment(ctx context.Context, c client.Client, gw *gwapiv1.Gateway, routeNS, routeKind string) (bool, error) {
 	for _, listener := range gw.Spec.Listeners {
-		// Check if the route kind is allowed for this listener
 		if !isKindAllowed(listener, routeKind) {
 			continue
 		}
 
-		// Check namespace policy
-		if !isNamespaceAllowed(listener, gw.Namespace, routeNS) {
-			continue
+		allowed, err := isNamespaceAllowed(ctx, c, listener, gw.Namespace, routeNS)
+		if err != nil {
+			return false, err
 		}
-
-		return true
+		if allowed {
+			return true, nil
+		}
 	}
-	return false
+	return false, nil
 }
 
 func isKindAllowed(listener gwapiv1.Listener, routeKind string) bool {
 	if listener.AllowedRoutes == nil || len(listener.AllowedRoutes.Kinds) == 0 {
-		// Default kinds based on protocol
 		return defaultKindForProtocol(listener.Protocol, routeKind)
 	}
 
 	for _, allowed := range listener.AllowedRoutes.Kinds {
 		if string(allowed.Kind) == routeKind {
-			// Group must be gateway.networking.k8s.io or empty
 			if allowed.Group == nil || *allowed.Group == "" || *allowed.Group == gwapiv1.GroupName {
 				return true
 			}
@@ -51,23 +55,78 @@ func defaultKindForProtocol(protocol gwapiv1.ProtocolType, routeKind string) boo
 	}
 }
 
-func isNamespaceAllowed(listener gwapiv1.Listener, gwNS, routeNS string) bool {
+func isNamespaceAllowed(ctx context.Context, c client.Client, listener gwapiv1.Listener, gwNS, routeNS string) (bool, error) {
 	if listener.AllowedRoutes == nil || listener.AllowedRoutes.Namespaces == nil || listener.AllowedRoutes.Namespaces.From == nil {
-		// Default: Same namespace
-		return gwNS == routeNS
+		return gwNS == routeNS, nil
 	}
 
 	switch *listener.AllowedRoutes.Namespaces.From {
 	case gwapiv1.NamespacesFromAll:
-		return true
+		return true, nil
 	case gwapiv1.NamespacesFromSame:
-		return gwNS == routeNS
+		return gwNS == routeNS, nil
 	case gwapiv1.NamespacesFromSelector:
-		// Selector-based namespace matching would require listing namespaces.
-		// For simplicity, allow if selector is set (full selector evaluation
-		// requires a client, which we avoid in this pure function).
-		return true
+		return matchNamespaceSelector(ctx, c, routeNS, listener.AllowedRoutes.Namespaces.Selector)
 	default:
-		return false
+		return false, nil
 	}
+}
+
+// matchNamespaceSelector fetches the Namespace and evaluates the label selector.
+func matchNamespaceSelector(ctx context.Context, c client.Client, namespace string, selector *metav1.LabelSelector) (bool, error) {
+	if selector == nil {
+		return true, nil // No selector means match all
+	}
+
+	var ns v1.Namespace
+	if err := c.Get(ctx, types.NamespacedName{Name: namespace}, &ns); err != nil {
+		return false, err
+	}
+
+	nsLabels := ns.Labels
+	if nsLabels == nil {
+		nsLabels = map[string]string{}
+	}
+
+	// Check matchLabels — all must match
+	for key, value := range selector.MatchLabels {
+		if nsLabels[key] != value {
+			return false, nil
+		}
+	}
+
+	// Check matchExpressions — all must match
+	for _, expr := range selector.MatchExpressions {
+		labelValue, hasLabel := nsLabels[expr.Key]
+
+		switch expr.Operator {
+		case metav1.LabelSelectorOpIn:
+			if !hasLabel || !containsString(expr.Values, labelValue) {
+				return false, nil
+			}
+		case metav1.LabelSelectorOpNotIn:
+			if hasLabel && containsString(expr.Values, labelValue) {
+				return false, nil
+			}
+		case metav1.LabelSelectorOpExists:
+			if !hasLabel {
+				return false, nil
+			}
+		case metav1.LabelSelectorOpDoesNotExist:
+			if hasLabel {
+				return false, nil
+			}
+		}
+	}
+
+	return true, nil
+}
+
+func containsString(slice []string, s string) bool {
+	for _, v := range slice {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }

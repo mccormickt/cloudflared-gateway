@@ -7,13 +7,12 @@ import (
 	"github.com/mccormickt/cloudflare-tunnel-controller/internal/cloudflare"
 
 	"k8s.io/apimachinery/pkg/fields"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-	"sigs.k8s.io/controller-runtime/pkg/source"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gwapiv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
 )
@@ -35,8 +34,6 @@ var _ reconcile.Reconciler = &tunnelReconciler{}
 // NewGatewayAPIController creates a new Gateway API controller that reconciles Gateway resources
 // to create and manage Cloudflare Tunnels.
 func NewGatewayAPIController(mgr manager.Manager) error {
-	ctx := context.Background()
-
 	api, err := cloudflare.NewClientFromEnv()
 	if err != nil {
 		return fmt.Errorf("creating Cloudflare client: %w", err)
@@ -48,57 +45,9 @@ func NewGatewayAPIController(mgr manager.Manager) error {
 		controllerName: gwapiv1.GatewayController(ControllerName),
 	}
 
-	c, err := controller.New("gatewayapi", mgr, controller.Options{Reconciler: r})
-	if err != nil {
-		return err
-	}
-
-	if err = r.watchResources(ctx, mgr, c); err != nil {
-		return err
-	}
-	return nil
-}
-
-// watchResources sets up watches for Gateway API resources.
-func (r *tunnelReconciler) watchResources(ctx context.Context, mgr manager.Manager, c controller.Controller) error {
-	// Primary: Gateway
-	if err := c.Watch(
-		source.Kind(mgr.GetCache(), &gwapiv1.Gateway{}),
-		&handler.EnqueueRequestForObject{},
-		predicate.GenerationChangedPredicate{},
-	); err != nil {
-		return fmt.Errorf("watching Gateway resources: %w", err)
-	}
-
-	// Secondary: GatewayClass → map to Gateways
-	if err := c.Watch(
-		source.Kind(mgr.GetCache(), &gwapiv1.GatewayClass{}),
-		handler.EnqueueRequestsFromMapFunc(r.gatewayClassToGateways),
-		predicate.GenerationChangedPredicate{},
-	); err != nil {
-		return fmt.Errorf("watching GatewayClass resources: %w", err)
-	}
-
-	// Secondary: HTTPRoute → map to parent Gateway
-	if err := c.Watch(
-		source.Kind(mgr.GetCache(), &gwapiv1.HTTPRoute{}),
-		handler.EnqueueRequestsFromMapFunc(routeToGateways),
-	); err != nil {
-		return fmt.Errorf("watching HTTPRoute resources: %w", err)
-	}
-
-	// Secondary: TLSRoute → map to parent Gateway (optional CRD)
-	if err := c.Watch(
-		source.Kind(mgr.GetCache(), &gwapiv1alpha2.TLSRoute{}),
-		handler.EnqueueRequestsFromMapFunc(routeToGateways),
-	); err != nil {
-		// TLSRoute CRD may not be installed — log and continue
-		mgr.GetLogger().Info("TLSRoute watch not configured (CRD may not be installed)", "error", err)
-	}
-
-	// Field indexer: Gateway → GatewayClassName
+	// Set up field indexer for Gateway → GatewayClassName
 	if err := mgr.GetFieldIndexer().IndexField(
-		ctx,
+		context.Background(),
 		&gwapiv1.Gateway{},
 		classGatewayIndex,
 		func(rawObj client.Object) []string {
@@ -109,6 +58,23 @@ func (r *tunnelReconciler) watchResources(ctx context.Context, mgr manager.Manag
 		return fmt.Errorf("creating Gateway indexer: %w", err)
 	}
 
+	// Build controller with watches
+	ctrl := builder.ControllerManagedBy(mgr).
+		Named("gatewayapi").
+		For(&gwapiv1.Gateway{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		Watches(&gwapiv1.GatewayClass{},
+			handler.EnqueueRequestsFromMapFunc(r.gatewayClassToGateways),
+			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		Watches(&gwapiv1.HTTPRoute{},
+			handler.EnqueueRequestsFromMapFunc(routeToGateways))
+
+	// TLSRoute watch is optional — CRD may not be installed
+	ctrl = ctrl.Watches(&gwapiv1alpha2.TLSRoute{},
+		handler.EnqueueRequestsFromMapFunc(routeToGateways))
+
+	if err := ctrl.Complete(r); err != nil {
+		return fmt.Errorf("building controller: %w", err)
+	}
 	return nil
 }
 

@@ -14,6 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/manager/signals"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gwapiv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
+	gwapiv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 )
 
 var scheme = runtime.NewScheme()
@@ -23,6 +24,7 @@ func init() {
 	clientgoscheme.AddToScheme(scheme)
 	gwapiv1.AddToScheme(scheme)
 	gwapiv1alpha2.AddToScheme(scheme)
+	gwapiv1beta1.AddToScheme(scheme)
 }
 
 func main() {
