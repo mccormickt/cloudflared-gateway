@@ -80,6 +80,10 @@ func NewGatewayAPIController(mgr manager.Manager) error {
 	ctrl = ctrl.Watches(&gwapiv1alpha2.TCPRoute{},
 		handler.EnqueueRequestsFromMapFunc(routeToGateways))
 
+	// BackendTLSPolicy watch — re-enqueue all Gateways on policy changes
+	ctrl = ctrl.Watches(&gwapiv1.BackendTLSPolicy{},
+		handler.EnqueueRequestsFromMapFunc(r.backendTLSPolicyToGateways))
+
 	if err := ctrl.Complete(r); err != nil {
 		return fmt.Errorf("building controller: %w", err)
 	}
@@ -146,6 +150,25 @@ func routeToGateways(_ context.Context, obj client.Object) []reconcile.Request {
 				Name:      string(ref.Name),
 				Namespace: ns,
 			},
+		})
+	}
+	return requests
+}
+
+// backendTLSPolicyToGateways re-enqueues all Gateways when a BackendTLSPolicy
+// changes. BackendTLSPolicy targets Services, not routes, so finding the exact
+// affected Gateway requires traversing routes. Since policy changes are rare,
+// we simply re-enqueue all Gateways.
+func (r *tunnelReconciler) backendTLSPolicyToGateways(ctx context.Context, _ client.Object) []reconcile.Request {
+	var gateways gwapiv1.GatewayList
+	if err := r.client.List(ctx, &gateways); err != nil {
+		return nil
+	}
+
+	requests := make([]reconcile.Request, 0, len(gateways.Items))
+	for _, gw := range gateways.Items {
+		requests = append(requests, reconcile.Request{
+			NamespacedName: client.ObjectKeyFromObject(&gw),
 		})
 	}
 	return requests

@@ -168,7 +168,9 @@ func (r *tunnelReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *g
 	var ingress []cf.UnvalidatedIngressRule
 	ingress = append(ingress, cfclient.BuildIngressRules(httpRoutes)...)
 	ingress = append(ingress, cfclient.BuildGRPCIngressRules(grpcRoutes)...)
-	ingress = append(ingress, cfclient.BuildTLSIngressRules(tlsRoutes)...)
+	tlsRules := cfclient.BuildTLSIngressRules(tlsRoutes)
+	tlsRules = r.applyBackendTLSPolicies(ctx, tlsRules, tlsRoutes)
+	ingress = append(ingress, tlsRules...)
 	ingress = append(ingress, cfclient.BuildTCPIngressRules(tcpRoutes)...)
 	ingress = append(ingress, cf.UnvalidatedIngressRule{Service: "http_status:404"})
 
