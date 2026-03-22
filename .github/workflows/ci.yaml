@@ -51,7 +51,7 @@ jobs:
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: go test ./tests/e2e/ -count=1 -timeout 10m -v
+        run: make test-e2e
 
   build:
     runs-on: ubuntu-latest

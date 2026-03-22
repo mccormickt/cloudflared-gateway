@@ -15,16 +15,16 @@ image: ## Build the container image
 test: test-unit ## Run unit tests (default)
 
 test-unit: ## Run unit tests (no cluster required)
-	go test ./internal/... -count=1
+	go test ./internal/...
 
 test-integration: ## Run envtest integration tests (real API server, no cluster)
-	KUBEBUILDER_ASSETS=$(KUBEBUILDER_ASSETS) go test ./tests/integration/ -count=1 -timeout 120s -v
+	KUBEBUILDER_ASSETS=$(KUBEBUILDER_ASSETS) go test ./tests/integration/ -timeout 120s -v
 
 test-e2e: ## Run kind e2e tests (creates a kind cluster, requires docker + CLOUDFLARE_* env)
-	go test ./tests/e2e/ -count=1 -timeout 10m -v
+	go test ./tests/e2e/ -timeout 10m -v
 
 test-conformance: ## Run Gateway API conformance suite (requires deployed controller + CLOUDFLARE_* env)
-	go test ./tests/conformance/ -count=1 -timeout 30m -v \
+	go test ./tests/conformance/ -timeout 30m -v \
 		-args -gateway-class=cloudflare-tunnel
 
 test-all: test-unit test-integration test-e2e ## Run unit + integration + e2e tests
