@@ -784,6 +784,114 @@ func TestReferenceGrant_Denied(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Tests: BuildCloudflaredDeployment — Infrastructure propagation
+// ---------------------------------------------------------------------------
+
+func TestBuildDeployment_InfrastructureLabels(t *testing.T) {
+	gw := makeGateway("test-gw", "default")
+	gw.Spec.Infrastructure = &gwapiv1.GatewayInfrastructure{
+		Labels: map[gwapiv1.LabelKey]gwapiv1.LabelValue{
+			"team":        "platform",
+			"environment": "prod",
+		},
+		Annotations: map[gwapiv1.AnnotationKey]gwapiv1.AnnotationValue{
+			"prometheus.io/scrape": "true",
+			"custom.io/owner":     "team-a",
+		},
+	}
+
+	deploy := BuildCloudflaredDeployment(gw, "test-secret")
+
+	// Check deployment-level labels
+	if deploy.Labels["team"] != "platform" {
+		t.Errorf("deployment label 'team': got %q, want %q", deploy.Labels["team"], "platform")
+	}
+	if deploy.Labels["environment"] != "prod" {
+		t.Errorf("deployment label 'environment': got %q, want %q", deploy.Labels["environment"], "prod")
+	}
+	// Original label should still be present
+	if deploy.Labels["app"] != "cloudflared-test-gw" {
+		t.Errorf("deployment label 'app': got %q, want %q", deploy.Labels["app"], "cloudflared-test-gw")
+	}
+
+	// Check pod template labels
+	if deploy.Spec.Template.Labels["team"] != "platform" {
+		t.Errorf("pod template label 'team': got %q, want %q", deploy.Spec.Template.Labels["team"], "platform")
+	}
+	if deploy.Spec.Template.Labels["environment"] != "prod" {
+		t.Errorf("pod template label 'environment': got %q, want %q", deploy.Spec.Template.Labels["environment"], "prod")
+	}
+
+	// Check deployment-level annotations
+	if deploy.Annotations["prometheus.io/scrape"] != "true" {
+		t.Errorf("deployment annotation 'prometheus.io/scrape': got %q, want %q", deploy.Annotations["prometheus.io/scrape"], "true")
+	}
+	if deploy.Annotations["custom.io/owner"] != "team-a" {
+		t.Errorf("deployment annotation 'custom.io/owner': got %q, want %q", deploy.Annotations["custom.io/owner"], "team-a")
+	}
+
+	// Check pod template annotations
+	if deploy.Spec.Template.Annotations["prometheus.io/scrape"] != "true" {
+		t.Errorf("pod template annotation 'prometheus.io/scrape': got %q, want %q", deploy.Spec.Template.Annotations["prometheus.io/scrape"], "true")
+	}
+	if deploy.Spec.Template.Annotations["custom.io/owner"] != "team-a" {
+		t.Errorf("pod template annotation 'custom.io/owner': got %q, want %q", deploy.Spec.Template.Annotations["custom.io/owner"], "team-a")
+	}
+}
+
+func TestBuildDeployment_NoInfrastructure(t *testing.T) {
+	gw := makeGateway("test-gw", "default")
+	// No Infrastructure set (nil)
+
+	deploy := BuildCloudflaredDeployment(gw, "test-secret")
+
+	// Original labels should be present and unchanged
+	if deploy.Labels["app"] != "cloudflared-test-gw" {
+		t.Errorf("deployment label 'app': got %q, want %q", deploy.Labels["app"], "cloudflared-test-gw")
+	}
+	if len(deploy.Labels) != 1 {
+		t.Errorf("expected 1 deployment label, got %d", len(deploy.Labels))
+	}
+	if deploy.Spec.Template.Labels["app"] != "cloudflared-test-gw" {
+		t.Errorf("pod template label 'app': got %q, want %q", deploy.Spec.Template.Labels["app"], "cloudflared-test-gw")
+	}
+	if len(deploy.Spec.Template.Labels) != 1 {
+		t.Errorf("expected 1 pod template label, got %d", len(deploy.Spec.Template.Labels))
+	}
+
+	// Annotations should be nil
+	if deploy.Annotations != nil {
+		t.Errorf("expected nil deployment annotations, got %v", deploy.Annotations)
+	}
+	if deploy.Spec.Template.Annotations != nil {
+		t.Errorf("expected nil pod template annotations, got %v", deploy.Spec.Template.Annotations)
+	}
+}
+
+func TestBuildDeployment_InfrastructureLabelsOnly(t *testing.T) {
+	gw := makeGateway("test-gw", "default")
+	gw.Spec.Infrastructure = &gwapiv1.GatewayInfrastructure{
+		Labels: map[gwapiv1.LabelKey]gwapiv1.LabelValue{
+			"team": "platform",
+		},
+		// No annotations
+	}
+
+	deploy := BuildCloudflaredDeployment(gw, "test-secret")
+
+	if deploy.Labels["team"] != "platform" {
+		t.Errorf("deployment label 'team': got %q, want %q", deploy.Labels["team"], "platform")
+	}
+	// Annotations should remain nil since none were specified
+	if deploy.Annotations != nil {
+		t.Errorf("expected nil deployment annotations, got %v", deploy.Annotations)
+	}
+	if deploy.Spec.Template.Annotations != nil {
+		t.Errorf("expected nil pod template annotations, got %v", deploy.Spec.Template.Annotations)
+	}
+}
+
 func TestReferenceGrant_NamedTarget(t *testing.T) {
 	scheme := testScheme()
 	targetName := gwapiv1.ObjectName("specific-svc")

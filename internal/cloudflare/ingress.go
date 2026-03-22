@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	cf "github.com/cloudflare/cloudflare-go"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -39,6 +40,18 @@ func BuildIngressRules(routes []gwapiv1.HTTPRoute) []cf.UnvalidatedIngressRule {
 		for _, rule := range route.Spec.Rules {
 			service := backendRefToService(rule.BackendRefs, routeNS)
 			originReq := buildOriginRequest(extractHostRewrite(rule.Filters))
+
+			// Map HTTPRoute BackendRequest timeout to Cloudflare connectTimeout
+			if rule.Timeouts != nil && rule.Timeouts.BackendRequest != nil {
+				timeout := parseGatewayDuration(string(*rule.Timeouts.BackendRequest))
+				if timeout != nil {
+					if originReq == nil {
+						originReq = &cf.OriginRequestConfig{}
+					}
+					originReq.ConnectTimeout = timeout
+				}
+			}
+
 			paths := extractPaths(rule.Matches)
 
 			if len(hostnames) == 0 {
@@ -383,4 +396,14 @@ func buildOriginRequest(hostRewrite *string) *cf.OriginRequestConfig {
 	return &cf.OriginRequestConfig{
 		HTTPHostHeader: hostRewrite,
 	}
+}
+
+// parseGatewayDuration parses a Gateway API Duration string (e.g. "10s", "500ms")
+// into a Cloudflare TunnelDuration. Returns nil if parsing fails.
+func parseGatewayDuration(s string) *cf.TunnelDuration {
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return nil
+	}
+	return &cf.TunnelDuration{Duration: d}
 }

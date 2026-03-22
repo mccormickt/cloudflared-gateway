@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"testing"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -331,6 +332,118 @@ func TestBuildIngressRules_UnsupportedFilterIgnored(t *testing.T) {
 	}
 	if rules[0].OriginRequest != nil {
 		t.Errorf("unsupported filter should not produce originRequest, got %+v", rules[0].OriginRequest)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Tests: HTTPRoute Timeouts
+// ---------------------------------------------------------------------------
+
+func TestBuildIngressRules_BackendTimeout(t *testing.T) {
+	timeout := gwapiv1.Duration("10s")
+	route := makeRoute("web", "default",
+		[]gwapiv1.Hostname{hostname("example.com")},
+		[]gwapiv1.HTTPRouteRule{{
+			BackendRefs: []gwapiv1.HTTPBackendRef{makeBackendRef("web-svc", 8080)},
+			Timeouts: &gwapiv1.HTTPRouteTimeouts{
+				BackendRequest: &timeout,
+			},
+		}},
+	)
+
+	rules := BuildIngressRules([]gwapiv1.HTTPRoute{route})
+
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(rules))
+	}
+	if rules[0].OriginRequest == nil {
+		t.Fatal("expected originRequest to be set")
+	}
+	if rules[0].OriginRequest.ConnectTimeout == nil {
+		t.Fatal("expected connectTimeout to be set")
+	}
+	if rules[0].OriginRequest.ConnectTimeout.Duration != 10*time.Second {
+		t.Errorf("connectTimeout: got %v, want 10s", rules[0].OriginRequest.ConnectTimeout.Duration)
+	}
+}
+
+func TestBuildIngressRules_BackendTimeoutMilliseconds(t *testing.T) {
+	timeout := gwapiv1.Duration("500ms")
+	route := makeRoute("web", "default",
+		[]gwapiv1.Hostname{hostname("example.com")},
+		[]gwapiv1.HTTPRouteRule{{
+			BackendRefs: []gwapiv1.HTTPBackendRef{makeBackendRef("web-svc", 8080)},
+			Timeouts: &gwapiv1.HTTPRouteTimeouts{
+				BackendRequest: &timeout,
+			},
+		}},
+	)
+
+	rules := BuildIngressRules([]gwapiv1.HTTPRoute{route})
+
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(rules))
+	}
+	if rules[0].OriginRequest == nil || rules[0].OriginRequest.ConnectTimeout == nil {
+		t.Fatal("expected connectTimeout to be set")
+	}
+	if rules[0].OriginRequest.ConnectTimeout.Duration != 500*time.Millisecond {
+		t.Errorf("connectTimeout: got %v, want 500ms", rules[0].OriginRequest.ConnectTimeout.Duration)
+	}
+}
+
+func TestBuildIngressRules_NoTimeout(t *testing.T) {
+	route := makeRoute("web", "default",
+		[]gwapiv1.Hostname{hostname("example.com")},
+		[]gwapiv1.HTTPRouteRule{{
+			BackendRefs: []gwapiv1.HTTPBackendRef{makeBackendRef("web-svc", 8080)},
+			// No Timeouts
+		}},
+	)
+
+	rules := BuildIngressRules([]gwapiv1.HTTPRoute{route})
+
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(rules))
+	}
+	if rules[0].OriginRequest != nil {
+		t.Errorf("expected nil originRequest when no timeout, got %+v", rules[0].OriginRequest)
+	}
+}
+
+func TestBuildIngressRules_TimeoutWithFilter(t *testing.T) {
+	timeout := gwapiv1.Duration("30s")
+	h := preciseHostname("internal.example.com")
+	route := makeRoute("web", "default",
+		[]gwapiv1.Hostname{hostname("example.com")},
+		[]gwapiv1.HTTPRouteRule{{
+			BackendRefs: []gwapiv1.HTTPBackendRef{makeBackendRef("web-svc", 8080)},
+			Filters: []gwapiv1.HTTPRouteFilter{{
+				Type: gwapiv1.HTTPRouteFilterURLRewrite,
+				URLRewrite: &gwapiv1.HTTPURLRewriteFilter{
+					Hostname: &h,
+				},
+			}},
+			Timeouts: &gwapiv1.HTTPRouteTimeouts{
+				BackendRequest: &timeout,
+			},
+		}},
+	)
+
+	rules := BuildIngressRules([]gwapiv1.HTTPRoute{route})
+
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(rules))
+	}
+	if rules[0].OriginRequest == nil {
+		t.Fatal("expected originRequest to be set")
+	}
+	// Both host rewrite and timeout should be present
+	if rules[0].OriginRequest.HTTPHostHeader == nil || *rules[0].OriginRequest.HTTPHostHeader != "internal.example.com" {
+		t.Errorf("httpHostHeader: got %v", rules[0].OriginRequest.HTTPHostHeader)
+	}
+	if rules[0].OriginRequest.ConnectTimeout == nil || rules[0].OriginRequest.ConnectTimeout.Duration != 30*time.Second {
+		t.Errorf("connectTimeout: got %v, want 30s", rules[0].OriginRequest.ConnectTimeout)
 	}
 }
 

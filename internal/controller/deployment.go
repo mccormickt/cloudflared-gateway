@@ -24,7 +24,7 @@ func BuildCloudflaredDeployment(gw *gwapiv1.Gateway, secretName string) *appsv1.
 	deployName := DeploymentName(gw.Name)
 	labels := map[string]string{"app": deployName}
 
-	return &appsv1.Deployment{
+	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      deployName,
 			Namespace: gw.Namespace,
@@ -83,4 +83,26 @@ func BuildCloudflaredDeployment(gw *gwapiv1.Gateway, secretName string) *appsv1.
 			},
 		},
 	}
+
+	// Propagate Gateway infrastructure labels and annotations to the Deployment and pod template.
+	if gw.Spec.Infrastructure != nil {
+		for k, v := range gw.Spec.Infrastructure.Labels {
+			deployment.Labels[string(k)] = string(v)
+			deployment.Spec.Template.Labels[string(k)] = string(v)
+		}
+		if len(gw.Spec.Infrastructure.Annotations) > 0 {
+			if deployment.Annotations == nil {
+				deployment.Annotations = make(map[string]string)
+			}
+			if deployment.Spec.Template.Annotations == nil {
+				deployment.Spec.Template.Annotations = make(map[string]string)
+			}
+			for k, v := range gw.Spec.Infrastructure.Annotations {
+				deployment.Annotations[string(k)] = string(v)
+				deployment.Spec.Template.Annotations[string(k)] = string(v)
+			}
+		}
+	}
+
+	return deployment
 }
