@@ -47,7 +47,7 @@ func isKindAllowed(listener gwapiv1.Listener, routeKind string) bool {
 func defaultKindForProtocol(protocol gwapiv1.ProtocolType, routeKind string) bool {
 	switch protocol {
 	case gwapiv1.HTTPProtocolType, gwapiv1.HTTPSProtocolType:
-		return routeKind == "HTTPRoute"
+		return routeKind == "HTTPRoute" || routeKind == "GRPCRoute"
 	case gwapiv1.TLSProtocolType:
 		return routeKind == "TLSRoute"
 	case gwapiv1.TCPProtocolType:

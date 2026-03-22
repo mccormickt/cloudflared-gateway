@@ -72,6 +72,10 @@ func NewGatewayAPIController(mgr manager.Manager) error {
 	ctrl = ctrl.Watches(&gwapiv1alpha2.TLSRoute{},
 		handler.EnqueueRequestsFromMapFunc(routeToGateways))
 
+	// GRPCRoute watch — v1 stable
+	ctrl = ctrl.Watches(&gwapiv1.GRPCRoute{},
+		handler.EnqueueRequestsFromMapFunc(routeToGateways))
+
 	// TCPRoute watch is optional — CRD may not be installed
 	ctrl = ctrl.Watches(&gwapiv1alpha2.TCPRoute{},
 		handler.EnqueueRequestsFromMapFunc(routeToGateways))
@@ -106,6 +110,8 @@ func routeToGateways(_ context.Context, obj client.Object) []reconcile.Request {
 
 	switch route := obj.(type) {
 	case *gwapiv1.HTTPRoute:
+		parentRefs = route.Spec.ParentRefs
+	case *gwapiv1.GRPCRoute:
 		parentRefs = route.Spec.ParentRefs
 	case *gwapiv1alpha2.TLSRoute:
 		parentRefs = route.Spec.ParentRefs

@@ -250,6 +250,132 @@ func extractHostRewrite(filters []gwapiv1.HTTPRouteFilter) *string {
 	return nil
 }
 
+// BuildGRPCIngressRules converts GRPCRoutes into Cloudflare tunnel ingress rules.
+// Every rule gets http2Origin=true since gRPC requires HTTP/2.
+// Does NOT append a catch-all rule — the caller is responsible for that.
+func BuildGRPCIngressRules(routes []gwapiv1.GRPCRoute) []cf.UnvalidatedIngressRule {
+	var rules []cf.UnvalidatedIngressRule
+	http2 := true
+
+	for i := range routes {
+		route := &routes[i]
+		hostnames := route.Spec.Hostnames
+		routeNS := route.Namespace
+		if routeNS == "" {
+			routeNS = "default"
+		}
+
+		for _, rule := range route.Spec.Rules {
+			service := grpcBackendRefToService(rule.BackendRefs, routeNS)
+			originReq := &cf.OriginRequestConfig{
+				Http2Origin: &http2,
+			}
+			paths := extractGRPCPaths(rule.Matches)
+
+			if len(hostnames) == 0 {
+				if len(paths) == 0 {
+					rules = append(rules, cf.UnvalidatedIngressRule{
+						Service:       service,
+						OriginRequest: originReq,
+					})
+				} else {
+					for _, path := range paths {
+						rules = append(rules, cf.UnvalidatedIngressRule{
+							Path:          path,
+							Service:       service,
+							OriginRequest: originReq,
+						})
+					}
+				}
+			} else {
+				for _, hostname := range hostnames {
+					if len(paths) == 0 {
+						rules = append(rules, cf.UnvalidatedIngressRule{
+							Hostname:      string(hostname),
+							Service:       service,
+							OriginRequest: originReq,
+						})
+					} else {
+						for _, path := range paths {
+							rules = append(rules, cf.UnvalidatedIngressRule{
+								Hostname:      string(hostname),
+								Path:          path,
+								Service:       service,
+								OriginRequest: originReq,
+							})
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return rules
+}
+
+func grpcBackendRefToService(refs []gwapiv1.GRPCBackendRef, routeNS string) string {
+	if len(refs) == 0 {
+		return "http_status:503"
+	}
+	ref := refs[0]
+	ns := routeNS
+	if ref.Namespace != nil {
+		ns = string(*ref.Namespace)
+	}
+	port := 80
+	if ref.Port != nil {
+		port = int(*ref.Port)
+	}
+	return fmt.Sprintf("http://%s.%s:%d", ref.Name, ns, port)
+}
+
+func extractGRPCPaths(matches []gwapiv1.GRPCRouteMatch) []string {
+	var paths []string
+	for _, m := range matches {
+		if m.Method == nil {
+			continue
+		}
+		matchType := gwapiv1.GRPCMethodMatchExact
+		if m.Method.Type != nil {
+			matchType = *m.Method.Type
+		}
+
+		svc := ""
+		if m.Method.Service != nil {
+			svc = *m.Method.Service
+		}
+		method := ""
+		if m.Method.Method != nil {
+			method = *m.Method.Method
+		}
+
+		if svc == "" && method == "" {
+			continue
+		}
+
+		switch matchType {
+		case gwapiv1.GRPCMethodMatchExact:
+			if svc != "" && method != "" {
+				paths = append(paths, "^/"+svc+"/"+method+"$")
+			} else if svc != "" {
+				paths = append(paths, "^/"+svc+"/")
+			} else {
+				// method only
+				paths = append(paths, "^.*/"+method+"$")
+			}
+		case gwapiv1.GRPCMethodMatchRegularExpression:
+			if svc != "" && method != "" {
+				paths = append(paths, "^/"+svc+"/"+method+"$")
+			} else if svc != "" {
+				paths = append(paths, "^/"+svc+"/")
+			} else {
+				paths = append(paths, "^.*/"+method+"$")
+			}
+		}
+	}
+	return paths
+}
+
 func buildOriginRequest(hostRewrite *string) *cf.OriginRequestConfig {
 	if hostRewrite == nil {
 		return nil

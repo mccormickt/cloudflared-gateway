@@ -488,3 +488,153 @@ func TestBuildTCPIngressRules_NoBackendRef(t *testing.T) {
 		t.Errorf("service: got %q, want %q", rules[0].Service, "http_status:503")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Tests: BuildGRPCIngressRules
+// ---------------------------------------------------------------------------
+
+func makeGRPCRoute(name, namespace string, hostnames []gwapiv1.Hostname, rules []gwapiv1.GRPCRouteRule) gwapiv1.GRPCRoute {
+	return gwapiv1.GRPCRoute{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: gwapiv1.GRPCRouteSpec{
+			Hostnames: hostnames,
+			Rules:     rules,
+		},
+	}
+}
+
+func makeGRPCBackendRef(name string, port int) gwapiv1.GRPCBackendRef {
+	p := gwapiv1.PortNumber(port)
+	return gwapiv1.GRPCBackendRef{
+		BackendRef: gwapiv1.BackendRef{
+			BackendObjectReference: gwapiv1.BackendObjectReference{
+				Name: gwapiv1.ObjectName(name),
+				Port: &p,
+			},
+		},
+	}
+}
+
+func grpcMethodMatch(matchType gwapiv1.GRPCMethodMatchType, service, method *string) gwapiv1.GRPCRouteMatch {
+	return gwapiv1.GRPCRouteMatch{
+		Method: &gwapiv1.GRPCMethodMatch{
+			Type:    &matchType,
+			Service: service,
+			Method:  method,
+		},
+	}
+}
+
+func strPtr(s string) *string { return &s }
+
+func TestBuildGRPCIngressRules_ServiceAndMethod(t *testing.T) {
+	route := makeGRPCRoute("grpc", "default",
+		[]gwapiv1.Hostname{hostname("grpc.example.com")},
+		[]gwapiv1.GRPCRouteRule{{
+			BackendRefs: []gwapiv1.GRPCBackendRef{makeGRPCBackendRef("grpc-svc", 50051)},
+			Matches: []gwapiv1.GRPCRouteMatch{
+				grpcMethodMatch(gwapiv1.GRPCMethodMatchExact, strPtr("mypackage.MyService"), strPtr("GetItem")),
+			},
+		}},
+	)
+
+	rules := BuildGRPCIngressRules([]gwapiv1.GRPCRoute{route})
+
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(rules))
+	}
+	if rules[0].Hostname != "grpc.example.com" {
+		t.Errorf("hostname: got %q, want %q", rules[0].Hostname, "grpc.example.com")
+	}
+	if rules[0].Path != "^/mypackage.MyService/GetItem$" {
+		t.Errorf("path: got %q, want %q", rules[0].Path, "^/mypackage.MyService/GetItem$")
+	}
+	if rules[0].Service != "http://grpc-svc.default:50051" {
+		t.Errorf("service: got %q, want %q", rules[0].Service, "http://grpc-svc.default:50051")
+	}
+}
+
+func TestBuildGRPCIngressRules_ServiceOnly(t *testing.T) {
+	route := makeGRPCRoute("grpc", "default",
+		[]gwapiv1.Hostname{hostname("grpc.example.com")},
+		[]gwapiv1.GRPCRouteRule{{
+			BackendRefs: []gwapiv1.GRPCBackendRef{makeGRPCBackendRef("grpc-svc", 50051)},
+			Matches: []gwapiv1.GRPCRouteMatch{
+				grpcMethodMatch(gwapiv1.GRPCMethodMatchExact, strPtr("mypackage.MyService"), nil),
+			},
+		}},
+	)
+
+	rules := BuildGRPCIngressRules([]gwapiv1.GRPCRoute{route})
+
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(rules))
+	}
+	if rules[0].Path != "^/mypackage.MyService/" {
+		t.Errorf("path: got %q, want %q", rules[0].Path, "^/mypackage.MyService/")
+	}
+}
+
+func TestBuildGRPCIngressRules_NoMatch(t *testing.T) {
+	route := makeGRPCRoute("grpc", "default",
+		[]gwapiv1.Hostname{hostname("grpc.example.com")},
+		[]gwapiv1.GRPCRouteRule{{
+			BackendRefs: []gwapiv1.GRPCBackendRef{makeGRPCBackendRef("grpc-svc", 50051)},
+			// No matches — should match all
+		}},
+	)
+
+	rules := BuildGRPCIngressRules([]gwapiv1.GRPCRoute{route})
+
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(rules))
+	}
+	if rules[0].Path != "" {
+		t.Errorf("path should be empty for no-match rule, got %q", rules[0].Path)
+	}
+	if rules[0].Hostname != "grpc.example.com" {
+		t.Errorf("hostname: got %q, want %q", rules[0].Hostname, "grpc.example.com")
+	}
+}
+
+func TestBuildGRPCIngressRules_Http2Origin(t *testing.T) {
+	route := makeGRPCRoute("grpc", "default",
+		[]gwapiv1.Hostname{hostname("grpc.example.com")},
+		[]gwapiv1.GRPCRouteRule{{
+			BackendRefs: []gwapiv1.GRPCBackendRef{makeGRPCBackendRef("grpc-svc", 50051)},
+		}},
+	)
+
+	rules := BuildGRPCIngressRules([]gwapiv1.GRPCRoute{route})
+
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(rules))
+	}
+	if rules[0].OriginRequest == nil {
+		t.Fatal("expected originRequest to be set")
+	}
+	if rules[0].OriginRequest.Http2Origin == nil || !*rules[0].OriginRequest.Http2Origin {
+		t.Error("expected http2Origin to be true")
+	}
+}
+
+func TestBuildGRPCIngressRules_NoBackendRef(t *testing.T) {
+	route := makeGRPCRoute("grpc", "default",
+		[]gwapiv1.Hostname{hostname("grpc.example.com")},
+		[]gwapiv1.GRPCRouteRule{{
+			// No BackendRefs
+		}},
+	)
+
+	rules := BuildGRPCIngressRules([]gwapiv1.GRPCRoute{route})
+
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(rules))
+	}
+	if rules[0].Service != "http_status:503" {
+		t.Errorf("service: got %q, want %q", rules[0].Service, "http_status:503")
+	}
+}
