@@ -48,10 +48,12 @@ func EnsureTunnelSecret(ctx context.Context, c client.Client, gw *gwapiv1.Gatewa
 				Name:      secretName,
 				Namespace: gw.Namespace,
 				OwnerReferences: []metav1.OwnerReference{{
-					APIVersion: gw.APIVersion,
-					Kind:       gw.Kind,
-					Name:       gw.Name,
-					UID:        gw.UID,
+					APIVersion:         "gateway.networking.k8s.io/v1",
+					Kind:               "Gateway",
+					Name:               gw.Name,
+					UID:                gw.UID,
+					Controller:         boolPtr(true),
+					BlockOwnerDeletion: boolPtr(true),
 				}},
 			},
 			Data: map[string][]byte{
@@ -111,3 +113,5 @@ func generateTunnelSecret() ([]byte, error) {
 	}
 	return secret, nil
 }
+
+func boolPtr(b bool) *bool { return &b }

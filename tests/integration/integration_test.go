@@ -106,12 +106,12 @@ func (m *mockCloudflareClient) CreateTunnel(ctx context.Context, name string, se
 	return cf.Tunnel{ID: "mock-tunnel-id", Name: name}, nil
 }
 
-func (m *mockCloudflareClient) GetTunnelByName(ctx context.Context, name string) (*cf.Tunnel, error) {
+func (m *mockCloudflareClient) GetTunnelByName(ctx context.Context, name string) (cf.Tunnel, error) {
 	m.record("GetTunnelByName", name)
 	if m.existingTunnel != nil && m.existingTunnel.Name == name {
-		return m.existingTunnel, nil
+		return *m.existingTunnel, nil
 	}
-	return nil, nil
+	return cf.Tunnel{}, ctrl.ErrTunnelNotFound
 }
 
 func (m *mockCloudflareClient) DeleteTunnel(ctx context.Context, id string) error {

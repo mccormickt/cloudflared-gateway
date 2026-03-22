@@ -7,6 +7,7 @@ import (
 	ctrl "github.com/mccormickt/cloudflare-tunnel-controller/internal/controller"
 
 	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -22,11 +23,11 @@ var scheme = runtime.NewScheme()
 
 func init() {
 	log.SetLogger(zap.New())
-	clientgoscheme.AddToScheme(scheme)
-	gwapiv1.AddToScheme(scheme)
-	gwapiv1alpha2.AddToScheme(scheme)
-	gwapiv1beta1.AddToScheme(scheme)
-	cfv1alpha1.AddToScheme(scheme)
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(gwapiv1.AddToScheme(scheme))
+	utilruntime.Must(gwapiv1alpha2.AddToScheme(scheme))
+	utilruntime.Must(gwapiv1beta1.AddToScheme(scheme))
+	utilruntime.Must(cfv1alpha1.AddToScheme(scheme))
 }
 
 func main() {

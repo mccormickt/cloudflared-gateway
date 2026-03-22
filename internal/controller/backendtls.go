@@ -2,11 +2,11 @@ package controller
 
 import (
 	"context"
+	"fmt"
 
 	cf "github.com/cloudflare/cloudflare-go"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/log"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gwapiv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
 )
@@ -16,25 +16,21 @@ import (
 //
 // If no matching policy is found, it returns noTLSVerify: true for backward
 // compatibility with the previous hardcoded behavior.
-func GetBackendTLSConfig(ctx context.Context, c client.Client, serviceNS, serviceName string) *cf.OriginRequestConfig {
-	logger := log.FromContext(ctx)
-
+func GetBackendTLSConfig(ctx context.Context, c client.Client, serviceNS, serviceName string) (*cf.OriginRequestConfig, error) {
 	var policyList gwapiv1.BackendTLSPolicyList
 	if err := c.List(ctx, &policyList, client.InNamespace(serviceNS)); err != nil {
-		logger.V(1).Info("Failed to list BackendTLSPolicies, falling back to noTLSVerify", "error", err)
-		noTLS := true
-		return &cf.OriginRequestConfig{NoTLSVerify: &noTLS}
+		return nil, fmt.Errorf("listing BackendTLSPolicies in %s: %w", serviceNS, err)
 	}
 
 	for _, policy := range policyList.Items {
 		if policyTargetsService(policy.Spec.TargetRefs, serviceName) {
-			return buildOriginRequestFromPolicy(&policy)
+			return buildOriginRequestFromPolicy(&policy), nil
 		}
 	}
 
 	// No matching policy — backward-compatible default
 	noTLS := true
-	return &cf.OriginRequestConfig{NoTLSVerify: &noTLS}
+	return &cf.OriginRequestConfig{NoTLSVerify: &noTLS}, nil
 }
 
 // policyTargetsService checks whether any of the policy's targetRefs reference
@@ -84,9 +80,9 @@ func buildOriginRequestFromPolicy(policy *gwapiv1.BackendTLSPolicy) *cf.OriginRe
 
 // applyBackendTLSPolicies overrides the originRequest on TLS ingress rules
 // based on BackendTLSPolicy resources targeting the backend services.
-func (r *tunnelReconciler) applyBackendTLSPolicies(ctx context.Context, rules []cf.UnvalidatedIngressRule, tlsRoutes []gwapiv1alpha2.TLSRoute) []cf.UnvalidatedIngressRule {
+func (r *tunnelReconciler) applyBackendTLSPolicies(ctx context.Context, rules []cf.UnvalidatedIngressRule, tlsRoutes []gwapiv1alpha2.TLSRoute) ([]cf.UnvalidatedIngressRule, error) {
 	if len(tlsRoutes) == 0 {
-		return rules
+		return rules, nil
 	}
 
 	// Build a map from "hostname → service" so we can match rules to backends.
@@ -124,15 +120,29 @@ func (r *tunnelReconciler) applyBackendTLSPolicies(ctx context.Context, rules []
 		}
 	}
 
+	// Cache GetBackendTLSConfig results by (namespace, name) to avoid
+	// redundant API calls when multiple rules reference the same backend.
+	type cacheKey struct{ namespace, name string }
+	tlsConfigCache := make(map[cacheKey]*cf.OriginRequestConfig)
+
 	// Override originRequest for matching rules
 	for i := range rules {
 		bk, ok := hostnameToBackend[rules[i].Hostname]
 		if !ok {
 			continue
 		}
-		cfg := GetBackendTLSConfig(ctx, r.client, bk.namespace, bk.name)
+		ck := cacheKey{bk.namespace, bk.name}
+		cfg, cached := tlsConfigCache[ck]
+		if !cached {
+			var err error
+			cfg, err = GetBackendTLSConfig(ctx, r.client, bk.namespace, bk.name)
+			if err != nil {
+				return nil, err
+			}
+			tlsConfigCache[ck] = cfg
+		}
 		rules[i].OriginRequest = cfg
 	}
 
-	return rules
+	return rules, nil
 }

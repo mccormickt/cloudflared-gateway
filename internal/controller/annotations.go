@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"log/slog"
+
 	cf "github.com/cloudflare/cloudflare-go"
 	cfclient "github.com/mccormickt/cloudflare-tunnel-controller/internal/cloudflare"
 
@@ -19,7 +21,10 @@ func applyHTTPRouteAnnotations(rules []cf.UnvalidatedIngressRule, httpRoutes []g
 	idx := 0
 	for i := range httpRoutes {
 		route := &httpRoutes[i]
-		annoCfg := cfclient.ParseOriginAnnotations(route.Annotations)
+		annoCfg, warnings := cfclient.ParseOriginAnnotations(route.Annotations)
+		for _, w := range warnings {
+			slog.Warn("HTTPRoute annotation warning", "route", route.Name, "warning", w)
+		}
 		if annoCfg == nil {
 			// Still need to advance idx past this route's rules
 			for _, rule := range route.Spec.Rules {
@@ -52,7 +57,10 @@ func applyGRPCRouteAnnotations(rules []cf.UnvalidatedIngressRule, grpcRoutes []g
 	idx := 0
 	for i := range grpcRoutes {
 		route := &grpcRoutes[i]
-		annoCfg := cfclient.ParseOriginAnnotations(route.Annotations)
+		annoCfg, warnings := cfclient.ParseOriginAnnotations(route.Annotations)
+		for _, w := range warnings {
+			slog.Warn("GRPCRoute annotation warning", "route", route.Name, "warning", w)
+		}
 		if annoCfg == nil {
 			for _, rule := range route.Spec.Rules {
 				paths := countGRPCPaths(rule.Matches)
@@ -84,7 +92,10 @@ func applyTLSRouteAnnotations(rules []cf.UnvalidatedIngressRule, tlsRoutes []gwa
 	idx := 0
 	for i := range tlsRoutes {
 		route := &tlsRoutes[i]
-		annoCfg := cfclient.ParseOriginAnnotations(route.Annotations)
+		annoCfg, warnings := cfclient.ParseOriginAnnotations(route.Annotations)
+		for _, w := range warnings {
+			slog.Warn("TLSRoute annotation warning", "route", route.Name, "warning", w)
+		}
 		if annoCfg == nil {
 			for range route.Spec.Rules {
 				idx += tlsRulesProduced(len(route.Spec.Hostnames))
@@ -114,7 +125,10 @@ func applyTCPRouteAnnotations(rules []cf.UnvalidatedIngressRule, tcpRoutes []gwa
 	idx := 0
 	for i := range tcpRoutes {
 		route := &tcpRoutes[i]
-		annoCfg := cfclient.ParseOriginAnnotations(route.Annotations)
+		annoCfg, warnings := cfclient.ParseOriginAnnotations(route.Annotations)
+		for _, w := range warnings {
+			slog.Warn("TCPRoute annotation warning", "route", route.Name, "warning", w)
+		}
 		if annoCfg == nil {
 			idx += len(route.Spec.Rules)
 			continue

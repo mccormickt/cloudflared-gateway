@@ -662,8 +662,9 @@ func TestBuildGRPCIngressRules_ServiceAndMethod(t *testing.T) {
 	if rules[0].Hostname != "grpc.example.com" {
 		t.Errorf("hostname: got %q, want %q", rules[0].Hostname, "grpc.example.com")
 	}
-	if rules[0].Path != "^/mypackage.MyService/GetItem$" {
-		t.Errorf("path: got %q, want %q", rules[0].Path, "^/mypackage.MyService/GetItem$")
+	// Dots should be escaped for exact match
+	if rules[0].Path != `^/mypackage\.MyService/GetItem$` {
+		t.Errorf("path: got %q, want %q", rules[0].Path, `^/mypackage\.MyService/GetItem$`)
 	}
 	if rules[0].Service != "http://grpc-svc.default:50051" {
 		t.Errorf("service: got %q, want %q", rules[0].Service, "http://grpc-svc.default:50051")
@@ -686,8 +687,32 @@ func TestBuildGRPCIngressRules_ServiceOnly(t *testing.T) {
 	if len(rules) != 1 {
 		t.Fatalf("expected 1 rule, got %d", len(rules))
 	}
-	if rules[0].Path != "^/mypackage.MyService/" {
-		t.Errorf("path: got %q, want %q", rules[0].Path, "^/mypackage.MyService/")
+	// Dots should be escaped for exact match
+	if rules[0].Path != `^/mypackage\.MyService/` {
+		t.Errorf("path: got %q, want %q", rules[0].Path, `^/mypackage\.MyService/`)
+	}
+}
+
+func TestBuildGRPCIngressRules_RegexMatch(t *testing.T) {
+	// Regex match should pass values through as-is without escaping
+	route := makeGRPCRoute("grpc", "default",
+		[]gwapiv1.Hostname{hostname("grpc.example.com")},
+		[]gwapiv1.GRPCRouteRule{{
+			BackendRefs: []gwapiv1.GRPCBackendRef{makeGRPCBackendRef("grpc-svc", 50051)},
+			Matches: []gwapiv1.GRPCRouteMatch{
+				grpcMethodMatch(gwapiv1.GRPCMethodMatchRegularExpression, strPtr("mypackage\\.My.*"), strPtr("Get.*")),
+			},
+		}},
+	)
+
+	rules := BuildGRPCIngressRules([]gwapiv1.GRPCRoute{route})
+
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(rules))
+	}
+	// Regex values passed through as-is
+	if rules[0].Path != `^/mypackage\.My.*/Get.*$` {
+		t.Errorf("path: got %q, want %q", rules[0].Path, `^/mypackage\.My.*/Get.*$`)
 	}
 }
 

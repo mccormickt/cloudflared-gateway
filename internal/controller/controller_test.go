@@ -8,7 +8,9 @@ import (
 
 	cf "github.com/cloudflare/cloudflare-go"
 	cfv1alpha1 "github.com/mccormickt/cloudflare-tunnel-controller/api/v1alpha1"
+	cfclient "github.com/mccormickt/cloudflare-tunnel-controller/internal/cloudflare"
 
+	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -73,12 +75,12 @@ func (m *mockCloudflareClient) CreateTunnel(ctx context.Context, name string, se
 	return cf.Tunnel{ID: "mock-tunnel-id", Name: name}, nil
 }
 
-func (m *mockCloudflareClient) GetTunnelByName(ctx context.Context, name string) (*cf.Tunnel, error) {
+func (m *mockCloudflareClient) GetTunnelByName(ctx context.Context, name string) (cf.Tunnel, error) {
 	m.record("GetTunnelByName", name)
 	if m.existingTunnel != nil && m.existingTunnel.Name == name {
-		return m.existingTunnel, nil
+		return *m.existingTunnel, nil
 	}
-	return nil, nil
+	return cf.Tunnel{}, cfclient.ErrTunnelNotFound
 }
 
 func (m *mockCloudflareClient) DeleteTunnel(ctx context.Context, id string) error {
@@ -928,5 +930,227 @@ func TestReferenceGrant_NamedTarget(t *testing.T) {
 	allowed, _ = CheckReferenceGrant(context.Background(), c, "frontend", "HTTPRoute", "backend", "Service", "other-svc")
 	if allowed {
 		t.Error("should deny when target name doesn't match")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// T19: Cleanup failure continuation
+// ---------------------------------------------------------------------------
+
+func TestCleanup_FailureContinuation(t *testing.T) {
+	scheme := testScheme()
+	gw := makeGateway("test-gw", "default")
+
+	// Create a deployment and secret that cleanup should try to delete
+	deployName := DeploymentName("test-gw")
+	deploy := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      deployName,
+			Namespace: "default",
+		},
+	}
+	secretName := TunnelSecretName("test-gw")
+	secret := &v1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: "default",
+		},
+	}
+
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(gw, deploy, secret).Build()
+	mock := newMockClient().withExistingTunnel("tunnel-id", "test-gw")
+	mock.deleteErr = fmt.Errorf("tunnel delete API error")
+
+	r := &tunnelReconciler{
+		client:         c,
+		cloudflare:     mock,
+		controllerName: gwapiv1.GatewayController(ControllerName),
+	}
+
+	err := r.cleanup(context.Background(), gw)
+
+	// Should return the first error (tunnel deletion)
+	if err == nil {
+		t.Fatal("cleanup should return error when tunnel deletion fails")
+	}
+	if err.Error() != "tunnel delete API error" {
+		t.Errorf("expected tunnel delete error, got: %v", err)
+	}
+
+	// Verify all three cleanup steps were attempted despite the tunnel delete error
+	calls := mock.getCalls()
+	var hasGet, hasDelete bool
+	for _, call := range calls {
+		switch call.method {
+		case "GetTunnelByName":
+			hasGet = true
+		case "DeleteTunnel":
+			hasDelete = true
+		}
+	}
+	if !hasGet {
+		t.Error("expected GetTunnelByName call")
+	}
+	if !hasDelete {
+		t.Error("expected DeleteTunnel call")
+	}
+
+	// Deployment and secret should still have been attempted for deletion
+	// (they would succeed since the fake client allows it)
+	var existingDeploy appsv1.Deployment
+	deployErr := c.Get(context.Background(), types.NamespacedName{Name: deployName, Namespace: "default"}, &existingDeploy)
+	if deployErr == nil {
+		t.Error("deployment should have been deleted despite tunnel delete failure")
+	}
+
+	var existingSecret v1.Secret
+	secretErr := c.Get(context.Background(), types.NamespacedName{Name: secretName, Namespace: "default"}, &existingSecret)
+	if secretErr == nil {
+		t.Error("secret should have been deleted despite tunnel delete failure")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// T20: Infrastructure label collision with 'app' label
+// ---------------------------------------------------------------------------
+
+func TestBuildDeployment_InfrastructureLabelCollision(t *testing.T) {
+	gw := makeGateway("test-gw", "default")
+	gw.Spec.Infrastructure = &gwapiv1.GatewayInfrastructure{
+		Labels: map[gwapiv1.LabelKey]gwapiv1.LabelValue{
+			"app": "override",
+		},
+	}
+
+	deploy := BuildCloudflaredDeployment(gw, "test-secret")
+
+	// Document the behavior: infrastructure labels override the built-in 'app' label.
+	// This is the current behavior — the 'app' label in the deployment map gets
+	// overwritten by the infrastructure label. The selector still uses the original
+	// value since it was set from the same map reference before the override.
+	//
+	// Note: In practice, overriding 'app' will cause a selector mismatch since
+	// the selector was built from the original labels map (which is now modified).
+	// This documents the existing behavior — callers should avoid setting 'app'
+	// in infrastructure labels.
+	if deploy.Labels["app"] != "override" {
+		t.Errorf("infrastructure 'app' label should override built-in, got %q", deploy.Labels["app"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// T18: Annotation application tests
+// ---------------------------------------------------------------------------
+
+func TestApplyHTTPRouteAnnotations_OnlyAnnotatedRoute(t *testing.T) {
+	port := gwapiv1.PortNumber(80)
+	route1 := gwapiv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "route-no-anno",
+			Namespace: "default",
+		},
+		Spec: gwapiv1.HTTPRouteSpec{
+			Hostnames: []gwapiv1.Hostname{"a.example.com"},
+			Rules: []gwapiv1.HTTPRouteRule{{
+				BackendRefs: []gwapiv1.HTTPBackendRef{{
+					BackendRef: gwapiv1.BackendRef{
+						BackendObjectReference: gwapiv1.BackendObjectReference{
+							Name: "svc-a",
+							Port: &port,
+						},
+					},
+				}},
+			}},
+		},
+	}
+
+	route2 := gwapiv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "route-with-anno",
+			Namespace: "default",
+			Annotations: map[string]string{
+				"tunnels.cloudflare.com/proxy-type": "socks",
+			},
+		},
+		Spec: gwapiv1.HTTPRouteSpec{
+			Hostnames: []gwapiv1.Hostname{"b.example.com"},
+			Rules: []gwapiv1.HTTPRouteRule{{
+				BackendRefs: []gwapiv1.HTTPBackendRef{{
+					BackendRef: gwapiv1.BackendRef{
+						BackendObjectReference: gwapiv1.BackendObjectReference{
+							Name: "svc-b",
+							Port: &port,
+						},
+					},
+				}},
+			}},
+		},
+	}
+
+	routes := []gwapiv1.HTTPRoute{route1, route2}
+	rules := cfclient.BuildIngressRules(routes)
+
+	if len(rules) != 2 {
+		t.Fatalf("expected 2 rules, got %d", len(rules))
+	}
+
+	rules = applyHTTPRouteAnnotations(rules, routes)
+
+	// First route (no annotations) should have no originRequest
+	if rules[0].OriginRequest != nil {
+		t.Errorf("route without annotations should have nil originRequest, got %+v", rules[0].OriginRequest)
+	}
+
+	// Second route (has annotations) should have proxy-type set
+	if rules[1].OriginRequest == nil {
+		t.Fatal("expected originRequest on annotated route")
+	}
+	if rules[1].OriginRequest.ProxyType == nil || *rules[1].OriginRequest.ProxyType != "socks" {
+		t.Errorf("expected proxyType 'socks', got %v", rules[1].OriginRequest.ProxyType)
+	}
+}
+
+func TestApplyHTTPRouteAnnotations_MultiHostname(t *testing.T) {
+	port := gwapiv1.PortNumber(80)
+	route := gwapiv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "multi-host",
+			Namespace: "default",
+			Annotations: map[string]string{
+				"tunnels.cloudflare.com/bastion-mode": "true",
+			},
+		},
+		Spec: gwapiv1.HTTPRouteSpec{
+			Hostnames: []gwapiv1.Hostname{"a.example.com", "b.example.com"},
+			Rules: []gwapiv1.HTTPRouteRule{{
+				BackendRefs: []gwapiv1.HTTPBackendRef{{
+					BackendRef: gwapiv1.BackendRef{
+						BackendObjectReference: gwapiv1.BackendObjectReference{
+							Name: "svc",
+							Port: &port,
+						},
+					},
+				}},
+			}},
+		},
+	}
+
+	routes := []gwapiv1.HTTPRoute{route}
+	rules := cfclient.BuildIngressRules(routes)
+
+	if len(rules) != 2 {
+		t.Fatalf("expected 2 rules (one per hostname), got %d", len(rules))
+	}
+
+	rules = applyHTTPRouteAnnotations(rules, routes)
+
+	// Both rules should have bastion-mode set
+	for i, rule := range rules {
+		if rule.OriginRequest == nil {
+			t.Fatalf("rule %d: expected originRequest", i)
+		}
+		if rule.OriginRequest.BastionMode == nil || !*rule.OriginRequest.BastionMode {
+			t.Errorf("rule %d: expected bastionMode=true", i)
+		}
 	}
 }

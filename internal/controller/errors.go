@@ -5,55 +5,57 @@ import (
 	"fmt"
 )
 
-// ErrorCategory classifies controller errors for retry policy decisions.
-type ErrorCategory int
+// errorCategory classifies controller errors for retry policy decisions.
+type errorCategory int
 
 const (
-	ErrKube       ErrorCategory = iota // Kubernetes API errors (retriable)
-	ErrCloudflare                      // Cloudflare API errors (retriable)
-	ErrConfig                          // Configuration/validation errors (permanent)
-	ErrFinalizer                       // Finalizer lifecycle errors (retriable)
+	errKube       errorCategory = iota // Kubernetes API errors (retriable)
+	errCloudflare                      // Cloudflare API errors (retriable)
+	errConfig                          // Configuration/validation errors (permanent)
+	errFinalizer                       // Finalizer lifecycle errors (retriable)
 )
 
 // ControllerError is a categorized error for reconciliation.
 type ControllerError struct {
-	Category ErrorCategory
-	Err      error
+	category errorCategory
+	err      error
 }
 
 func (e *ControllerError) Error() string {
 	var prefix string
-	switch e.Category {
-	case ErrKube:
+	switch e.category {
+	case errKube:
 		prefix = "Kubernetes API error"
-	case ErrCloudflare:
+	case errCloudflare:
 		prefix = "Cloudflare API error"
-	case ErrConfig:
+	case errConfig:
 		prefix = "configuration error"
-	case ErrFinalizer:
+	case errFinalizer:
 		prefix = "finalizer error"
+	default:
+		prefix = "unknown error"
 	}
-	return fmt.Sprintf("%s: %v", prefix, e.Err)
+	return fmt.Sprintf("%s: %v", prefix, e.err)
 }
 
 func (e *ControllerError) Unwrap() error {
-	return e.Err
+	return e.err
 }
 
 func KubeError(err error) *ControllerError {
-	return &ControllerError{Category: ErrKube, Err: err}
+	return &ControllerError{category: errKube, err: err}
 }
 
 func CloudflareError(err error) *ControllerError {
-	return &ControllerError{Category: ErrCloudflare, Err: err}
+	return &ControllerError{category: errCloudflare, err: err}
 }
 
 func ConfigError(msg string) *ControllerError {
-	return &ControllerError{Category: ErrConfig, Err: fmt.Errorf("%s", msg)}
+	return &ControllerError{category: errConfig, err: errors.New(msg)}
 }
 
 func FinalizerError(err error) *ControllerError {
-	return &ControllerError{Category: ErrFinalizer, Err: err}
+	return &ControllerError{category: errFinalizer, err: err}
 }
 
 // IsPermanent returns true if the error should not be retried.
@@ -61,7 +63,7 @@ func FinalizerError(err error) *ControllerError {
 func IsPermanent(err error) bool {
 	var ce *ControllerError
 	if errors.As(err, &ce) {
-		return ce.Category == ErrConfig
+		return ce.category == errConfig
 	}
 	return false
 }

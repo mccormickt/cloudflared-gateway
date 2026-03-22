@@ -20,7 +20,10 @@ func BuildTunnelToken(accountID, tunnelID string, secret []byte) string {
 		"t": tunnelID,
 		"s": base64.StdEncoding.EncodeToString(secret),
 	}
-	jsonBytes, _ := json.Marshal(payload)
+	jsonBytes, err := json.Marshal(payload)
+	if err != nil {
+		panic("BUG: failed to marshal tunnel token payload: " + err.Error())
+	}
 	return base64.StdEncoding.EncodeToString(jsonBytes)
 }
 
@@ -41,15 +44,19 @@ func BuildIngressRules(routes []gwapiv1.HTTPRoute) []cf.UnvalidatedIngressRule {
 			service := backendRefToService(rule.BackendRefs, routeNS)
 			originReq := buildOriginRequest(extractHostRewrite(rule.Filters))
 
-			// Map HTTPRoute BackendRequest timeout to Cloudflare connectTimeout
+			// Map HTTPRoute BackendRequest timeout to Cloudflare connectTimeout.
+			// Gateway API admission should prevent invalid durations, so parse
+			// errors are logged but not propagated.
 			if rule.Timeouts != nil && rule.Timeouts.BackendRequest != nil {
-				timeout := parseGatewayDuration(string(*rule.Timeouts.BackendRequest))
-				if timeout != nil {
+				timeout, err := parseGatewayDuration(string(*rule.Timeouts.BackendRequest))
+				if err == nil {
 					if originReq == nil {
 						originReq = &cf.OriginRequestConfig{}
 					}
 					originReq.ConnectTimeout = timeout
 				}
+				// Invalid durations are silently skipped — Gateway API validation
+				// should catch these before they reach the controller.
 			}
 
 			paths := extractPaths(rule.Matches)
@@ -165,15 +172,14 @@ func backendRefToTCPService(refs []gwapiv1.BackendRef, routeNS string) string {
 		return "http_status:503"
 	}
 	ref := refs[0]
+	if ref.Port == nil {
+		return "http_status:503"
+	}
 	ns := routeNS
 	if ref.Namespace != nil {
 		ns = string(*ref.Namespace)
 	}
-	port := 0
-	if ref.Port != nil {
-		port = int(*ref.Port)
-	}
-	return fmt.Sprintf("tcp://%s.%s:%d", ref.Name, ns, port)
+	return fmt.Sprintf("tcp://%s.%s:%d", ref.Name, ns, int(*ref.Port))
 }
 
 func backendRefToService(refs []gwapiv1.HTTPBackendRef, routeNS string) string {
@@ -368,15 +374,19 @@ func extractGRPCPaths(matches []gwapiv1.GRPCRouteMatch) []string {
 
 		switch matchType {
 		case gwapiv1.GRPCMethodMatchExact:
+			// Escape dots in service and method names for exact matching
+			escapedSvc := strings.ReplaceAll(svc, ".", "\\.")
+			escapedMethod := strings.ReplaceAll(method, ".", "\\.")
 			if svc != "" && method != "" {
-				paths = append(paths, "^/"+svc+"/"+method+"$")
+				paths = append(paths, "^/"+escapedSvc+"/"+escapedMethod+"$")
 			} else if svc != "" {
-				paths = append(paths, "^/"+svc+"/")
+				paths = append(paths, "^/"+escapedSvc+"/")
 			} else {
 				// method only
-				paths = append(paths, "^.*/"+method+"$")
+				paths = append(paths, "^.*/"+escapedMethod+"$")
 			}
 		case gwapiv1.GRPCMethodMatchRegularExpression:
+			// Values are already regex — pass through as-is
 			if svc != "" && method != "" {
 				paths = append(paths, "^/"+svc+"/"+method+"$")
 			} else if svc != "" {
@@ -399,11 +409,11 @@ func buildOriginRequest(hostRewrite *string) *cf.OriginRequestConfig {
 }
 
 // parseGatewayDuration parses a Gateway API Duration string (e.g. "10s", "500ms")
-// into a Cloudflare TunnelDuration. Returns nil if parsing fails.
-func parseGatewayDuration(s string) *cf.TunnelDuration {
+// into a Cloudflare TunnelDuration. Returns an error if parsing fails.
+func parseGatewayDuration(s string) (*cf.TunnelDuration, error) {
 	d, err := time.ParseDuration(s)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("parsing gateway duration %q: %w", s, err)
 	}
-	return &cf.TunnelDuration{Duration: d}
+	return &cf.TunnelDuration{Duration: d}, nil
 }

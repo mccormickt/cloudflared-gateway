@@ -64,7 +64,8 @@ func (r *tunnelReconciler) reconcile(ctx context.Context, req reconcile.Request)
 	if !gw.DeletionTimestamp.IsZero() {
 		if controllerutil.ContainsFinalizer(&gw, finalizerName) {
 			if err := r.cleanup(ctx, &gw); err != nil {
-				logger.Error(err, "Cleanup failed")
+				logger.Error(err, "Cleanup failed, will retry")
+				return reconcile.Result{}, CloudflareError(err)
 			}
 			controllerutil.RemoveFinalizer(&gw, finalizerName)
 			if err := r.client.Update(ctx, &gw); err != nil {
@@ -99,6 +100,7 @@ func (r *tunnelReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *g
 	// Set GatewayClass Accepted status
 	if err := PatchGatewayClassStatus(ctx, r.client, gc, true); err != nil {
 		logger.Error(err, "Failed to patch GatewayClass status")
+		return KubeError(err)
 	}
 
 	// Ensure tunnel secret
@@ -109,24 +111,25 @@ func (r *tunnelReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *g
 
 	// Get or create tunnel
 	tunnel, err := r.cloudflare.GetTunnelByName(ctx, gw.Name)
-	if err != nil {
+	if err != nil && !errors.Is(err, cfclient.ErrTunnelNotFound) {
 		return CloudflareError(err)
 	}
+	tunnelFound := err == nil
 
-	if tunnel != nil && regenerated {
+	if tunnelFound && regenerated {
 		logger.Info("Secret regenerated, recreating tunnel", "tunnel_id", tunnel.ID)
 		if err := r.cloudflare.DeleteTunnel(ctx, tunnel.ID); err != nil {
 			return CloudflareError(err)
 		}
-		tunnel = nil
+		tunnelFound = false
 	}
 
-	if tunnel == nil {
+	if !tunnelFound {
 		created, err := r.cloudflare.CreateTunnel(ctx, gw.Name, secret)
 		if err != nil {
 			return CloudflareError(err)
 		}
-		tunnel = &created
+		tunnel = created
 		logger.Info("Created tunnel", "tunnel_id", tunnel.ID)
 	}
 
@@ -167,14 +170,20 @@ func (r *tunnelReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *g
 	// Build ingress rules
 	var ingress []cf.UnvalidatedIngressRule
 	httpRules := cfclient.BuildIngressRules(httpRoutes)
-	httpRules = r.applyAccessPolicies(ctx, httpRules, gw, httpRoutes)
+	httpRules, err = r.applyAccessPolicies(ctx, httpRules, gw, httpRoutes)
+	if err != nil {
+		return KubeError(err)
+	}
 	httpRules = applyHTTPRouteAnnotations(httpRules, httpRoutes)
 	ingress = append(ingress, httpRules...)
 	grpcRules := cfclient.BuildGRPCIngressRules(grpcRoutes)
 	grpcRules = applyGRPCRouteAnnotations(grpcRules, grpcRoutes)
 	ingress = append(ingress, grpcRules...)
 	tlsRules := cfclient.BuildTLSIngressRules(tlsRoutes)
-	tlsRules = r.applyBackendTLSPolicies(ctx, tlsRules, tlsRoutes)
+	tlsRules, err = r.applyBackendTLSPolicies(ctx, tlsRules, tlsRoutes)
+	if err != nil {
+		return KubeError(err)
+	}
 	tlsRules = applyTLSRouteAnnotations(tlsRules, tlsRoutes)
 	ingress = append(ingress, tlsRules...)
 	tcpRules := cfclient.BuildTCPIngressRules(tcpRoutes)
@@ -188,25 +197,38 @@ func (r *tunnelReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *g
 	}
 	logger.Info("Pushed tunnel config", "rules", len(ingress))
 
-	// Set route statuses
+	// Set route statuses — best-effort all patches, return first error
+	var statusErr error
 	for i := range httpRoutes {
 		if err := PatchHTTPRouteStatus(ctx, r.client, &httpRoutes[i], gw.Name, gw.Namespace, true); err != nil {
 			logger.Error(err, "Failed to patch HTTPRoute status", "route", httpRoutes[i].Name)
+			if statusErr == nil {
+				statusErr = err
+			}
 		}
 	}
 	for i := range grpcRoutes {
 		if err := PatchGRPCRouteStatus(ctx, r.client, &grpcRoutes[i], gw.Name, gw.Namespace, true); err != nil {
 			logger.Error(err, "Failed to patch GRPCRoute status", "route", grpcRoutes[i].Name)
+			if statusErr == nil {
+				statusErr = err
+			}
 		}
 	}
 	for i := range tlsRoutes {
 		if err := PatchTLSRouteStatus(ctx, r.client, &tlsRoutes[i], gw.Name, gw.Namespace, true); err != nil {
 			logger.Error(err, "Failed to patch TLSRoute status", "route", tlsRoutes[i].Name)
+			if statusErr == nil {
+				statusErr = err
+			}
 		}
 	}
 	for i := range tcpRoutes {
 		if err := PatchTCPRouteStatus(ctx, r.client, &tcpRoutes[i], gw.Name, gw.Namespace, true); err != nil {
 			logger.Error(err, "Failed to patch TCPRoute status", "route", tcpRoutes[i].Name)
+			if statusErr == nil {
+				statusErr = err
+			}
 		}
 	}
 
@@ -214,6 +236,13 @@ func (r *tunnelReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *g
 	listenerCounts := computeListenerCounts(gw, httpRoutes, grpcRoutes, tlsRoutes, tcpRoutes)
 	if err := PatchGatewayStatus(ctx, r.client, gw, tunnel.ID, listenerCounts); err != nil {
 		logger.Error(err, "Failed to patch Gateway status")
+		if statusErr == nil {
+			statusErr = err
+		}
+	}
+
+	if statusErr != nil {
+		return KubeError(statusErr)
 	}
 
 	return nil
@@ -224,12 +253,12 @@ func (r *tunnelReconciler) cleanup(ctx context.Context, gw *gwapiv1.Gateway) err
 	var firstErr error
 
 	tunnel, err := r.cloudflare.GetTunnelByName(ctx, gw.Name)
-	if err != nil {
+	if err != nil && !errors.Is(err, cfclient.ErrTunnelNotFound) {
 		logger.Error(err, "Cleanup: failed to get tunnel")
 		if firstErr == nil {
 			firstErr = err
 		}
-	} else if tunnel != nil {
+	} else if err == nil {
 		if err := r.cloudflare.DeleteTunnel(ctx, tunnel.ID); err != nil {
 			logger.Error(err, "Cleanup: failed to delete tunnel")
 			if firstErr == nil {
@@ -299,8 +328,15 @@ func (r *tunnelReconciler) applyDeployment(ctx context.Context, desired *appsv1.
 }
 
 func (r *tunnelReconciler) collectHTTPRoutes(ctx context.Context, gw *gwapiv1.Gateway) ([]gwapiv1.HTTPRoute, error) {
+	// NOTE: This lists all HTTPRoutes cluster-wide. This is a known scaling
+	// limitation — field indexing on parentRefs would be more efficient but
+	// requires a larger refactor.
 	var routeList gwapiv1.HTTPRouteList
 	if err := r.client.List(ctx, &routeList); err != nil {
+		// HTTPRoute CRD should always exist, but handle gracefully.
+		if apierrors.IsNotFound(err) || isNoMatchError(err) {
+			return nil, nil
+		}
 		return nil, err
 	}
 

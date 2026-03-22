@@ -1,6 +1,7 @@
 package cloudflare
 
 import (
+	"fmt"
 	"strconv"
 	"time"
 
@@ -11,13 +12,16 @@ const annotationPrefix = "tunnels.cloudflare.com/"
 
 // ParseOriginAnnotations extracts Cloudflare-specific origin request configuration
 // from resource annotations with the tunnels.cloudflare.com/ prefix.
-func ParseOriginAnnotations(annotations map[string]string) *cf.OriginRequestConfig {
+// Returns the config (or nil if no valid annotations found) and any warnings
+// for annotations that were recognized but had invalid values.
+func ParseOriginAnnotations(annotations map[string]string) (*cf.OriginRequestConfig, []string) {
 	if len(annotations) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	var cfg cf.OriginRequestConfig
 	var hasConfig bool
+	var warnings []string
 
 	if v, ok := annotations[annotationPrefix+"proxy-type"]; ok {
 		cfg.ProxyType = &v
@@ -27,18 +31,24 @@ func ParseOriginAnnotations(annotations map[string]string) *cf.OriginRequestConf
 		if b, err := strconv.ParseBool(v); err == nil {
 			cfg.BastionMode = &b
 			hasConfig = true
+		} else {
+			warnings = append(warnings, fmt.Sprintf("invalid bastion-mode value %q: %v", v, err))
 		}
 	}
 	if v, ok := annotations[annotationPrefix+"disable-chunked-encoding"]; ok {
 		if b, err := strconv.ParseBool(v); err == nil {
 			cfg.DisableChunkedEncoding = &b
 			hasConfig = true
+		} else {
+			warnings = append(warnings, fmt.Sprintf("invalid disable-chunked-encoding value %q: %v", v, err))
 		}
 	}
 	if v, ok := annotations[annotationPrefix+"keep-alive-connections"]; ok {
 		if n, err := strconv.Atoi(v); err == nil {
 			cfg.KeepAliveConnections = &n
 			hasConfig = true
+		} else {
+			warnings = append(warnings, fmt.Sprintf("invalid keep-alive-connections value %q: %v", v, err))
 		}
 	}
 	if v, ok := annotations[annotationPrefix+"keep-alive-timeout"]; ok {
@@ -46,19 +56,23 @@ func ParseOriginAnnotations(annotations map[string]string) *cf.OriginRequestConf
 			td := cf.TunnelDuration{Duration: d}
 			cfg.KeepAliveTimeout = &td
 			hasConfig = true
+		} else {
+			warnings = append(warnings, fmt.Sprintf("invalid keep-alive-timeout value %q: %v", v, err))
 		}
 	}
 	if v, ok := annotations[annotationPrefix+"no-happy-eyeballs"]; ok {
 		if b, err := strconv.ParseBool(v); err == nil {
 			cfg.NoHappyEyeballs = &b
 			hasConfig = true
+		} else {
+			warnings = append(warnings, fmt.Sprintf("invalid no-happy-eyeballs value %q: %v", v, err))
 		}
 	}
 
 	if !hasConfig {
-		return nil
+		return nil, warnings
 	}
-	return &cfg
+	return &cfg, warnings
 }
 
 // MergeOriginRequest merges annotation-based config into an existing OriginRequestConfig.

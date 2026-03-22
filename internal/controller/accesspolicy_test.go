@@ -36,9 +36,12 @@ func TestApplyAccessPolicies_GatewayTarget(t *testing.T) {
 	gw := makeGateway("test-gw", "default")
 	policy := makeAccessPolicy("require-access", "default", "my-org", true,
 		[]string{"aud-1", "aud-2"}, "Gateway", "test-gw")
-	route := makeHTTPRoute("web-route", "default", "test-gw")
 
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(policy).Build()
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(policy).
+		WithStatusSubresource(policy).
+		Build()
+	route := makeHTTPRoute("web-route", "default", "test-gw")
 	r := &tunnelReconciler{
 		client:         c,
 		cloudflare:     newMockClient(),
@@ -48,7 +51,10 @@ func TestApplyAccessPolicies_GatewayTarget(t *testing.T) {
 	httpRoutes := []gwapiv1.HTTPRoute{*route}
 	rules := cfclient.BuildIngressRules(httpRoutes)
 
-	rules = r.applyAccessPolicies(context.Background(), rules, gw, httpRoutes)
+	rules, err := r.applyAccessPolicies(context.Background(), rules, gw, httpRoutes)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if len(rules) != 1 {
 		t.Fatalf("expected 1 rule, got %d", len(rules))
@@ -74,7 +80,10 @@ func TestApplyAccessPolicies_RouteTarget(t *testing.T) {
 		nil, "HTTPRoute", "web-route")
 	route := makeHTTPRoute("web-route", "default", "test-gw")
 
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(policy).Build()
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(policy).
+		WithStatusSubresource(policy).
+		Build()
 	r := &tunnelReconciler{
 		client:         c,
 		cloudflare:     newMockClient(),
@@ -84,7 +93,10 @@ func TestApplyAccessPolicies_RouteTarget(t *testing.T) {
 	httpRoutes := []gwapiv1.HTTPRoute{*route}
 	rules := cfclient.BuildIngressRules(httpRoutes)
 
-	rules = r.applyAccessPolicies(context.Background(), rules, gw, httpRoutes)
+	rules, err := r.applyAccessPolicies(context.Background(), rules, gw, httpRoutes)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if rules[0].OriginRequest == nil || rules[0].OriginRequest.Access == nil {
 		t.Fatal("expected access config on route-targeted policy")
@@ -109,7 +121,10 @@ func TestApplyAccessPolicies_NoPolicy(t *testing.T) {
 	httpRoutes := []gwapiv1.HTTPRoute{*route}
 	rules := cfclient.BuildIngressRules(httpRoutes)
 
-	rules = r.applyAccessPolicies(context.Background(), rules, gw, httpRoutes)
+	rules, err := r.applyAccessPolicies(context.Background(), rules, gw, httpRoutes)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if rules[0].OriginRequest != nil && rules[0].OriginRequest.Access != nil {
 		t.Error("expected no access config when no policy exists")
@@ -124,7 +139,10 @@ func TestApplyAccessPolicies_PolicyTargetsDifferentGateway(t *testing.T) {
 		nil, "Gateway", "other-gw")
 	route := makeHTTPRoute("web-route", "default", "test-gw")
 
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(policy).Build()
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(policy).
+		WithStatusSubresource(policy).
+		Build()
 	r := &tunnelReconciler{
 		client:         c,
 		cloudflare:     newMockClient(),
@@ -134,7 +152,10 @@ func TestApplyAccessPolicies_PolicyTargetsDifferentGateway(t *testing.T) {
 	httpRoutes := []gwapiv1.HTTPRoute{*route}
 	rules := cfclient.BuildIngressRules(httpRoutes)
 
-	rules = r.applyAccessPolicies(context.Background(), rules, gw, httpRoutes)
+	rules, err := r.applyAccessPolicies(context.Background(), rules, gw, httpRoutes)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if rules[0].OriginRequest != nil && rules[0].OriginRequest.Access != nil {
 		t.Error("policy targeting different gateway should not apply")
@@ -157,7 +178,10 @@ func TestApplyAccessPolicies_PreservesExistingOriginRequest(t *testing.T) {
 		},
 	})
 
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(policy).Build()
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(policy).
+		WithStatusSubresource(policy).
+		Build()
 	r := &tunnelReconciler{
 		client:         c,
 		cloudflare:     newMockClient(),
@@ -167,7 +191,10 @@ func TestApplyAccessPolicies_PreservesExistingOriginRequest(t *testing.T) {
 	httpRoutes := []gwapiv1.HTTPRoute{*route}
 	rules := cfclient.BuildIngressRules(httpRoutes)
 
-	rules = r.applyAccessPolicies(context.Background(), rules, gw, httpRoutes)
+	rules, err := r.applyAccessPolicies(context.Background(), rules, gw, httpRoutes)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if rules[0].OriginRequest == nil {
 		t.Fatal("expected originRequest")

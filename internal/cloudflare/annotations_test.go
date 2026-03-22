@@ -11,7 +11,10 @@ func TestParseOriginAnnotations_ProxyType(t *testing.T) {
 	annotations := map[string]string{
 		"tunnels.cloudflare.com/proxy-type": "socks",
 	}
-	cfg := ParseOriginAnnotations(annotations)
+	cfg, warnings := ParseOriginAnnotations(annotations)
+	if len(warnings) != 0 {
+		t.Errorf("unexpected warnings: %v", warnings)
+	}
 	if cfg == nil {
 		t.Fatal("expected non-nil config")
 	}
@@ -24,7 +27,10 @@ func TestParseOriginAnnotations_BastionMode(t *testing.T) {
 	annotations := map[string]string{
 		"tunnels.cloudflare.com/bastion-mode": "true",
 	}
-	cfg := ParseOriginAnnotations(annotations)
+	cfg, warnings := ParseOriginAnnotations(annotations)
+	if len(warnings) != 0 {
+		t.Errorf("unexpected warnings: %v", warnings)
+	}
 	if cfg == nil {
 		t.Fatal("expected non-nil config")
 	}
@@ -42,7 +48,10 @@ func TestParseOriginAnnotations_Multiple(t *testing.T) {
 		"tunnels.cloudflare.com/keep-alive-timeout":       "30s",
 		"tunnels.cloudflare.com/no-happy-eyeballs":        "false",
 	}
-	cfg := ParseOriginAnnotations(annotations)
+	cfg, warnings := ParseOriginAnnotations(annotations)
+	if len(warnings) != 0 {
+		t.Errorf("unexpected warnings: %v", warnings)
+	}
 	if cfg == nil {
 		t.Fatal("expected non-nil config")
 	}
@@ -67,12 +76,12 @@ func TestParseOriginAnnotations_Multiple(t *testing.T) {
 }
 
 func TestParseOriginAnnotations_Empty(t *testing.T) {
-	cfg := ParseOriginAnnotations(nil)
+	cfg, _ := ParseOriginAnnotations(nil)
 	if cfg != nil {
 		t.Errorf("expected nil for nil annotations, got %+v", cfg)
 	}
 
-	cfg = ParseOriginAnnotations(map[string]string{})
+	cfg, _ = ParseOriginAnnotations(map[string]string{})
 	if cfg != nil {
 		t.Errorf("expected nil for empty annotations, got %+v", cfg)
 	}
@@ -82,9 +91,12 @@ func TestParseOriginAnnotations_InvalidBool(t *testing.T) {
 	annotations := map[string]string{
 		"tunnels.cloudflare.com/bastion-mode": "not-a-bool",
 	}
-	cfg := ParseOriginAnnotations(annotations)
+	cfg, warnings := ParseOriginAnnotations(annotations)
 	if cfg != nil {
 		t.Errorf("expected nil for invalid bool, got %+v", cfg)
+	}
+	if len(warnings) != 1 {
+		t.Errorf("expected 1 warning, got %d: %v", len(warnings), warnings)
 	}
 }
 
@@ -92,9 +104,12 @@ func TestParseOriginAnnotations_InvalidInt(t *testing.T) {
 	annotations := map[string]string{
 		"tunnels.cloudflare.com/keep-alive-connections": "not-a-number",
 	}
-	cfg := ParseOriginAnnotations(annotations)
+	cfg, warnings := ParseOriginAnnotations(annotations)
 	if cfg != nil {
 		t.Errorf("expected nil for invalid int, got %+v", cfg)
+	}
+	if len(warnings) != 1 {
+		t.Errorf("expected 1 warning, got %d: %v", len(warnings), warnings)
 	}
 }
 
@@ -102,9 +117,12 @@ func TestParseOriginAnnotations_InvalidDuration(t *testing.T) {
 	annotations := map[string]string{
 		"tunnels.cloudflare.com/keep-alive-timeout": "not-a-duration",
 	}
-	cfg := ParseOriginAnnotations(annotations)
+	cfg, warnings := ParseOriginAnnotations(annotations)
 	if cfg != nil {
 		t.Errorf("expected nil for invalid duration, got %+v", cfg)
+	}
+	if len(warnings) != 1 {
+		t.Errorf("expected 1 warning, got %d: %v", len(warnings), warnings)
 	}
 }
 
@@ -114,7 +132,10 @@ func TestParseOriginAnnotations_UnrelatedAnnotationsIgnored(t *testing.T) {
 		"tunnels.cloudflare.com/proxy-type":     "socks",
 		"something-else.cloudflare.com/bastion": "true",
 	}
-	cfg := ParseOriginAnnotations(annotations)
+	cfg, warnings := ParseOriginAnnotations(annotations)
+	if len(warnings) != 0 {
+		t.Errorf("unexpected warnings: %v", warnings)
+	}
 	if cfg == nil {
 		t.Fatal("expected non-nil config")
 	}

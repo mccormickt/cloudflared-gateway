@@ -3,14 +3,15 @@ package controller
 import (
 	"fmt"
 
-	"github.com/mccormickt/cloudflare-tunnel-controller/internal/cloudflare"
-
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
+
+// ContainerImage is the cloudflared container image used in the tunnel deployment.
+const ContainerImage = "cloudflare/cloudflared:2024.12.2"
 
 // DeploymentName returns the cloudflared Deployment name for a Gateway.
 func DeploymentName(gwName string) string {
@@ -30,10 +31,12 @@ func BuildCloudflaredDeployment(gw *gwapiv1.Gateway, secretName string) *appsv1.
 			Namespace: gw.Namespace,
 			Labels:    labels,
 			OwnerReferences: []metav1.OwnerReference{{
-				APIVersion: gw.APIVersion,
-				Kind:       gw.Kind,
-				Name:       gw.Name,
-				UID:        gw.UID,
+				APIVersion:         "gateway.networking.k8s.io/v1",
+				Kind:               "Gateway",
+				Name:               gw.Name,
+				UID:                gw.UID,
+				Controller:         boolPtr(true),
+				BlockOwnerDeletion: boolPtr(true),
 			}},
 		},
 		Spec: appsv1.DeploymentSpec{
@@ -48,7 +51,7 @@ func BuildCloudflaredDeployment(gw *gwapiv1.Gateway, secretName string) *appsv1.
 				Spec: v1.PodSpec{
 					Containers: []v1.Container{{
 						Name:  "cloudflared",
-						Image: cloudflare.ContainerImage,
+						Image: ContainerImage,
 						Args:  []string{"tunnel", "--metrics", "0.0.0.0:2000", "run"},
 						Env: []v1.EnvVar{{
 							Name: "TUNNEL_TOKEN",
