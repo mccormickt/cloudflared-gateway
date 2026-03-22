@@ -1,0 +1,34 @@
+# CloudflareAccessPolicy uses the Gateway API Policy Attachment pattern (GEP-713)
+# to configure Cloudflare Access JWT enforcement on targeted resources.
+#
+# Target a Gateway to protect all routes:
+apiVersion: cloudflare.jan0ski.net/v1alpha1
+kind: CloudflareAccessPolicy
+metadata:
+  name: gateway-access
+  namespace: default
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: cloudflare-tunnel
+  teamName: my-org
+  required: true
+  audTag:
+    - "your-aud-tag-here"
+---
+# Or target a specific HTTPRoute:
+apiVersion: cloudflare.jan0ski.net/v1alpha1
+kind: CloudflareAccessPolicy
+metadata:
+  name: route-access
+  namespace: default
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: protected-route
+  teamName: my-org
+  required: true
+  audTag:
+    - "route-specific-aud-tag"

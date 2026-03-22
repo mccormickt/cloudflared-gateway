@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	cf "github.com/cloudflare/cloudflare-go"
+	cfv1alpha1 "github.com/mccormickt/cloudflare-tunnel-controller/api/v1alpha1"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -100,6 +101,7 @@ func testScheme() *runtime.Scheme {
 	gwapiv1.AddToScheme(s)
 	gwapiv1alpha2.AddToScheme(s)
 	gwapiv1beta1.AddToScheme(s)
+	cfv1alpha1.AddToScheme(s)
 	return s
 }
 

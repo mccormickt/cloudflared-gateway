@@ -166,7 +166,9 @@ func (r *tunnelReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *g
 
 	// Build ingress rules
 	var ingress []cf.UnvalidatedIngressRule
-	ingress = append(ingress, cfclient.BuildIngressRules(httpRoutes)...)
+	httpRules := cfclient.BuildIngressRules(httpRoutes)
+	httpRules = r.applyAccessPolicies(ctx, httpRules, gw, httpRoutes)
+	ingress = append(ingress, httpRules...)
 	ingress = append(ingress, cfclient.BuildGRPCIngressRules(grpcRoutes)...)
 	tlsRules := cfclient.BuildTLSIngressRules(tlsRoutes)
 	tlsRules = r.applyBackendTLSPolicies(ctx, tlsRules, tlsRoutes)

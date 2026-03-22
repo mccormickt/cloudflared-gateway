@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 
+	cfv1alpha1 "github.com/mccormickt/cloudflare-tunnel-controller/api/v1alpha1"
 	ctrl "github.com/mccormickt/cloudflare-tunnel-controller/internal/controller"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -25,6 +26,7 @@ func init() {
 	gwapiv1.AddToScheme(scheme)
 	gwapiv1alpha2.AddToScheme(scheme)
 	gwapiv1beta1.AddToScheme(scheme)
+	cfv1alpha1.AddToScheme(scheme)
 }
 
 func main() {

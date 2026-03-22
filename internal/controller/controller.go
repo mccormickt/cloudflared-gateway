@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	cfv1alpha1 "github.com/mccormickt/cloudflare-tunnel-controller/api/v1alpha1"
 	"github.com/mccormickt/cloudflare-tunnel-controller/internal/cloudflare"
 
 	"k8s.io/apimachinery/pkg/fields"
@@ -84,6 +85,10 @@ func NewGatewayAPIController(mgr manager.Manager) error {
 	ctrl = ctrl.Watches(&gwapiv1.BackendTLSPolicy{},
 		handler.EnqueueRequestsFromMapFunc(r.backendTLSPolicyToGateways))
 
+	// CloudflareAccessPolicy watch — re-enqueue all Gateways on policy changes
+	ctrl = ctrl.Watches(&cfv1alpha1.CloudflareAccessPolicy{},
+		handler.EnqueueRequestsFromMapFunc(r.accessPolicyToGateways))
+
 	if err := ctrl.Complete(r); err != nil {
 		return fmt.Errorf("building controller: %w", err)
 	}
@@ -160,6 +165,25 @@ func routeToGateways(_ context.Context, obj client.Object) []reconcile.Request {
 // affected Gateway requires traversing routes. Since policy changes are rare,
 // we simply re-enqueue all Gateways.
 func (r *tunnelReconciler) backendTLSPolicyToGateways(ctx context.Context, _ client.Object) []reconcile.Request {
+	var gateways gwapiv1.GatewayList
+	if err := r.client.List(ctx, &gateways); err != nil {
+		return nil
+	}
+
+	requests := make([]reconcile.Request, 0, len(gateways.Items))
+	for _, gw := range gateways.Items {
+		requests = append(requests, reconcile.Request{
+			NamespacedName: client.ObjectKeyFromObject(&gw),
+		})
+	}
+	return requests
+}
+
+// accessPolicyToGateways re-enqueues all Gateways when a CloudflareAccessPolicy
+// changes. Since policies are referenced by HTTPRoute ExtensionRef filters,
+// determining the exact affected Gateway requires traversing routes. Policy
+// changes are rare, so we re-enqueue all Gateways.
+func (r *tunnelReconciler) accessPolicyToGateways(ctx context.Context, _ client.Object) []reconcile.Request {
 	var gateways gwapiv1.GatewayList
 	if err := r.client.List(ctx, &gateways); err != nil {
 		return nil
