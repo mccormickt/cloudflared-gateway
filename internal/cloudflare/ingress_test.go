@@ -426,3 +426,65 @@ func TestBuildTLSIngressRules_NoBackendRefProduces503(t *testing.T) {
 		t.Errorf("service: got %q", rules[0].Service)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Tests: BuildTCPIngressRules
+// ---------------------------------------------------------------------------
+
+func TestBuildTCPIngressRules_BasicRoute(t *testing.T) {
+	p := gwapiv1.PortNumber(5432)
+	route := gwapiv1alpha2.TCPRoute{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "tcp-route",
+			Namespace: "default",
+		},
+		Spec: gwapiv1alpha2.TCPRouteSpec{
+			Rules: []gwapiv1alpha2.TCPRouteRule{{
+				BackendRefs: []gwapiv1.BackendRef{{
+					BackendObjectReference: gwapiv1.BackendObjectReference{
+						Name: "db-svc",
+						Port: &p,
+					},
+				}},
+			}},
+		},
+	}
+
+	rules := BuildTCPIngressRules([]gwapiv1alpha2.TCPRoute{route})
+
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(rules))
+	}
+	if rules[0].Service != "tcp://db-svc.default:5432" {
+		t.Errorf("service: got %q, want %q", rules[0].Service, "tcp://db-svc.default:5432")
+	}
+	if rules[0].Hostname != "" {
+		t.Errorf("hostname should be empty for TCPRoute, got %q", rules[0].Hostname)
+	}
+	if rules[0].OriginRequest != nil {
+		t.Errorf("expected nil originRequest for TCPRoute, got %+v", rules[0].OriginRequest)
+	}
+}
+
+func TestBuildTCPIngressRules_NoBackendRef(t *testing.T) {
+	route := gwapiv1alpha2.TCPRoute{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "tcp-empty",
+			Namespace: "default",
+		},
+		Spec: gwapiv1alpha2.TCPRouteSpec{
+			Rules: []gwapiv1alpha2.TCPRouteRule{{
+				// No BackendRefs
+			}},
+		},
+	}
+
+	rules := BuildTCPIngressRules([]gwapiv1alpha2.TCPRoute{route})
+
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(rules))
+	}
+	if rules[0].Service != "http_status:503" {
+		t.Errorf("service: got %q, want %q", rules[0].Service, "http_status:503")
+	}
+}

@@ -154,10 +154,16 @@ func (r *tunnelReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *g
 		return KubeError(err)
 	}
 
+	tcpRoutes, err := r.collectTCPRoutes(ctx, gw)
+	if err != nil {
+		return KubeError(err)
+	}
+
 	// Build ingress rules
 	var ingress []cf.UnvalidatedIngressRule
 	ingress = append(ingress, cfclient.BuildIngressRules(httpRoutes)...)
 	ingress = append(ingress, cfclient.BuildTLSIngressRules(tlsRoutes)...)
+	ingress = append(ingress, cfclient.BuildTCPIngressRules(tcpRoutes)...)
 	ingress = append(ingress, cf.UnvalidatedIngressRule{Service: "http_status:404"})
 
 	// Push config
@@ -177,9 +183,14 @@ func (r *tunnelReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *g
 			logger.Error(err, "Failed to patch TLSRoute status", "route", tlsRoutes[i].Name)
 		}
 	}
+	for i := range tcpRoutes {
+		if err := PatchTCPRouteStatus(ctx, r.client, &tcpRoutes[i], gw.Name, gw.Namespace, true); err != nil {
+			logger.Error(err, "Failed to patch TCPRoute status", "route", tcpRoutes[i].Name)
+		}
+	}
 
 	// Compute listener route counts and set Gateway status
-	listenerCounts := computeListenerCounts(gw, httpRoutes, tlsRoutes)
+	listenerCounts := computeListenerCounts(gw, httpRoutes, tlsRoutes, tcpRoutes)
 	if err := PatchGatewayStatus(ctx, r.client, gw, tunnel.ID, listenerCounts); err != nil {
 		logger.Error(err, "Failed to patch Gateway status")
 	}
@@ -341,7 +352,33 @@ func routeReferencesGateway(parentRefs []gwapiv1.ParentReference, gw *gwapiv1.Ga
 	return false
 }
 
-func computeListenerCounts(gw *gwapiv1.Gateway, httpRoutes []gwapiv1.HTTPRoute, tlsRoutes []gwapiv1alpha2.TLSRoute) []ListenerRouteCount {
+func (r *tunnelReconciler) collectTCPRoutes(ctx context.Context, gw *gwapiv1.Gateway) ([]gwapiv1alpha2.TCPRoute, error) {
+	var routeList gwapiv1alpha2.TCPRouteList
+	if err := r.client.List(ctx, &routeList); err != nil {
+		if apierrors.IsNotFound(err) || isNoMatchError(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	var attached []gwapiv1alpha2.TCPRoute
+	for _, route := range routeList.Items {
+		if !routeReferencesGateway(route.Spec.ParentRefs, gw) {
+			continue
+		}
+		allowed, err := CheckRouteAttachment(ctx, r.client, gw, route.Namespace, "TCPRoute")
+		if err != nil {
+			return nil, err
+		}
+		if !allowed {
+			continue
+		}
+		attached = append(attached, route)
+	}
+	return attached, nil
+}
+
+func computeListenerCounts(gw *gwapiv1.Gateway, httpRoutes []gwapiv1.HTTPRoute, tlsRoutes []gwapiv1alpha2.TLSRoute, tcpRoutes []gwapiv1alpha2.TCPRoute) []ListenerRouteCount {
 	counts := make([]ListenerRouteCount, 0, len(gw.Spec.Listeners))
 	for _, listener := range gw.Spec.Listeners {
 		var count int32
@@ -353,6 +390,8 @@ func computeListenerCounts(gw *gwapiv1.Gateway, httpRoutes []gwapiv1.HTTPRoute, 
 			}
 		case gwapiv1.TLSProtocolType:
 			count = int32(len(tlsRoutes))
+		case gwapiv1.TCPProtocolType:
+			count = int32(len(tcpRoutes))
 		}
 		counts = append(counts, ListenerRouteCount{
 			Name:     listener.Name,

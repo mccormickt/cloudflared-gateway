@@ -50,6 +50,8 @@ func defaultKindForProtocol(protocol gwapiv1.ProtocolType, routeKind string) boo
 		return routeKind == "HTTPRoute"
 	case gwapiv1.TLSProtocolType:
 		return routeKind == "TLSRoute"
+	case gwapiv1.TCPProtocolType:
+		return routeKind == "TCPRoute"
 	default:
 		return false
 	}

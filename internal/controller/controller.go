@@ -72,6 +72,10 @@ func NewGatewayAPIController(mgr manager.Manager) error {
 	ctrl = ctrl.Watches(&gwapiv1alpha2.TLSRoute{},
 		handler.EnqueueRequestsFromMapFunc(routeToGateways))
 
+	// TCPRoute watch is optional — CRD may not be installed
+	ctrl = ctrl.Watches(&gwapiv1alpha2.TCPRoute{},
+		handler.EnqueueRequestsFromMapFunc(routeToGateways))
+
 	if err := ctrl.Complete(r); err != nil {
 		return fmt.Errorf("building controller: %w", err)
 	}
@@ -104,6 +108,8 @@ func routeToGateways(_ context.Context, obj client.Object) []reconcile.Request {
 	case *gwapiv1.HTTPRoute:
 		parentRefs = route.Spec.ParentRefs
 	case *gwapiv1alpha2.TLSRoute:
+		parentRefs = route.Spec.ParentRefs
+	case *gwapiv1alpha2.TCPRoute:
 		parentRefs = route.Spec.ParentRefs
 	default:
 		return nil

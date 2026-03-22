@@ -172,6 +172,43 @@ func PatchTLSRouteStatus(ctx context.Context, c client.Client, route *gwapiv1alp
 	return c.Status().Update(ctx, route)
 }
 
+// PatchTCPRouteStatus sets the Accepted condition for a specific parentRef on a TCPRoute.
+func PatchTCPRouteStatus(ctx context.Context, c client.Client, route *gwapiv1alpha2.TCPRoute, gwName, gwNS string, accepted bool) error {
+	status := metav1.ConditionTrue
+	reason := string(gwapiv1.RouteReasonAccepted)
+	message := "Route is accepted"
+	if !accepted {
+		status = metav1.ConditionFalse
+		reason = string(gwapiv1.RouteReasonNotAllowedByListeners)
+		message = "Route is not allowed by listeners"
+	}
+
+	gwGroup := gwapiv1.Group(gwapiv1.GroupName)
+	gwKind := gwapiv1.Kind("Gateway")
+	gwNamespace := gwapiv1.Namespace(gwNS)
+
+	parentStatus := gwapiv1.RouteParentStatus{
+		ParentRef: gwapiv1.ParentReference{
+			Group:     &gwGroup,
+			Kind:      &gwKind,
+			Namespace: &gwNamespace,
+			Name:      gwapiv1.ObjectName(gwName),
+		},
+		ControllerName: gwapiv1.GatewayController(ControllerName),
+		Conditions: []metav1.Condition{{
+			Type:               string(gwapiv1.RouteConditionAccepted),
+			Status:             status,
+			ObservedGeneration: route.Generation,
+			LastTransitionTime: metav1.Now(),
+			Reason:             reason,
+			Message:            message,
+		}},
+	}
+
+	route.Status.Parents = setParentStatus(route.Status.Parents, parentStatus, gwName, gwNS)
+	return c.Status().Update(ctx, route)
+}
+
 // supportedKindsForProtocol returns the route kinds supported by a listener protocol.
 func supportedKindsForProtocol(protocol gwapiv1.ProtocolType) []gwapiv1.RouteGroupKind {
 	group := gwapiv1.Group(gwapiv1.GroupName)
@@ -185,6 +222,8 @@ func supportedKindsForProtocol(protocol gwapiv1.ProtocolType) []gwapiv1.RouteGro
 		}
 	case gwapiv1.TLSProtocolType:
 		return []gwapiv1.RouteGroupKind{{Group: &group, Kind: "TLSRoute"}}
+	case gwapiv1.TCPProtocolType:
+		return []gwapiv1.RouteGroupKind{{Group: &group, Kind: "TCPRoute"}}
 	default:
 		return nil
 	}

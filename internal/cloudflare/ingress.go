@@ -123,6 +123,46 @@ func BuildTLSIngressRules(routes []gwapiv1alpha2.TLSRoute) []cf.UnvalidatedIngre
 	return rules
 }
 
+// BuildTCPIngressRules converts TCPRoutes into Cloudflare tunnel ingress rules.
+// TCPRoutes have no hostnames — they are port-based and map to tcp:// backends.
+// Does NOT append a catch-all rule — the caller is responsible for that.
+func BuildTCPIngressRules(routes []gwapiv1alpha2.TCPRoute) []cf.UnvalidatedIngressRule {
+	var rules []cf.UnvalidatedIngressRule
+
+	for i := range routes {
+		route := &routes[i]
+		routeNS := route.Namespace
+		if routeNS == "" {
+			routeNS = "default"
+		}
+
+		for _, rule := range route.Spec.Rules {
+			service := backendRefToTCPService(rule.BackendRefs, routeNS)
+			rules = append(rules, cf.UnvalidatedIngressRule{
+				Service: service,
+			})
+		}
+	}
+
+	return rules
+}
+
+func backendRefToTCPService(refs []gwapiv1.BackendRef, routeNS string) string {
+	if len(refs) == 0 {
+		return "http_status:503"
+	}
+	ref := refs[0]
+	ns := routeNS
+	if ref.Namespace != nil {
+		ns = string(*ref.Namespace)
+	}
+	port := 0
+	if ref.Port != nil {
+		port = int(*ref.Port)
+	}
+	return fmt.Sprintf("tcp://%s.%s:%d", ref.Name, ns, port)
+}
+
 func backendRefToService(refs []gwapiv1.HTTPBackendRef, routeNS string) string {
 	if len(refs) == 0 {
 		return "http_status:503"
