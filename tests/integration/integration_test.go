@@ -3,13 +3,11 @@ package integration
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"sync"
+	"strings"
 	"testing"
 
-	cf "github.com/cloudflare/cloudflare-go"
-
-	ctrl "github.com/mccormickt/cloudflare-tunnel-controller/internal/cloudflare"
 	controller "github.com/mccormickt/cloudflare-tunnel-controller/internal/controller"
 
 	v1 "k8s.io/api/core/v1"
@@ -41,9 +39,15 @@ func TestMain(m *testing.M) {
 		panic("failed to start envtest: " + err.Error())
 	}
 
-	gwapiv1.AddToScheme(scheme.Scheme)
-	gwapiv1alpha2.AddToScheme(scheme.Scheme)
-	gwapiv1beta1.AddToScheme(scheme.Scheme)
+	if err := gwapiv1.Install(scheme.Scheme); err != nil {
+		panic("failed to register gateway API v1 scheme: " + err.Error())
+	}
+	if err := gwapiv1alpha2.Install(scheme.Scheme); err != nil {
+		panic("failed to register gateway API v1alpha2 scheme: " + err.Error())
+	}
+	if err := gwapiv1beta1.Install(scheme.Scheme); err != nil {
+		panic("failed to register gateway API v1beta1 scheme: " + err.Error())
+	}
 
 	k8sClient, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})
 	if err != nil {
@@ -56,75 +60,13 @@ func TestMain(m *testing.M) {
 }
 
 func gatewayAPICRDPath() string {
-	// The CRDs are in the gateway-api module's config/crd/experimental directory
-	// (experimental includes TLSRoute)
-	gomod := os.Getenv("GOMODCACHE")
-	if gomod == "" {
-		gomod = filepath.Join(os.Getenv("HOME"), "go", "pkg", "mod")
+	// Use go list to find the module directory — derives version from go.mod
+	out, err := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", "sigs.k8s.io/gateway-api").Output()
+	if err != nil {
+		panic("failed to find gateway-api module directory: " + err.Error())
 	}
-	return filepath.Join(gomod, "sigs.k8s.io", "gateway-api@v1.4.1", "config", "crd", "experimental")
+	return filepath.Join(strings.TrimSpace(string(out)), "config", "crd", "experimental")
 }
-
-// ---------------------------------------------------------------------------
-// Mock Cloudflare client (same pattern as unit tests)
-// ---------------------------------------------------------------------------
-
-type mockCall struct {
-	method string
-	args   []any
-}
-
-type mockCloudflareClient struct {
-	mu             sync.Mutex
-	calls          []mockCall
-	existingTunnel *cf.Tunnel
-	accountID      string
-}
-
-func newMockClient() *mockCloudflareClient {
-	return &mockCloudflareClient{accountID: "test-account"}
-}
-
-func (m *mockCloudflareClient) record(method string, args ...any) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.calls = append(m.calls, mockCall{method: method, args: args})
-}
-
-func (m *mockCloudflareClient) getCalls() []mockCall {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	result := make([]mockCall, len(m.calls))
-	copy(result, m.calls)
-	return result
-}
-
-func (m *mockCloudflareClient) AccountID() string { return m.accountID }
-
-func (m *mockCloudflareClient) CreateTunnel(ctx context.Context, name string, secret []byte) (cf.Tunnel, error) {
-	m.record("CreateTunnel", name)
-	return cf.Tunnel{ID: "mock-tunnel-id", Name: name}, nil
-}
-
-func (m *mockCloudflareClient) GetTunnelByName(ctx context.Context, name string) (cf.Tunnel, error) {
-	m.record("GetTunnelByName", name)
-	if m.existingTunnel != nil && m.existingTunnel.Name == name {
-		return *m.existingTunnel, nil
-	}
-	return cf.Tunnel{}, ctrl.ErrTunnelNotFound
-}
-
-func (m *mockCloudflareClient) DeleteTunnel(ctx context.Context, id string) error {
-	m.record("DeleteTunnel", id)
-	return nil
-}
-
-func (m *mockCloudflareClient) UpdateTunnelConfiguration(ctx context.Context, tunnelID string, ingress []cf.UnvalidatedIngressRule) error {
-	m.record("UpdateTunnelConfiguration", tunnelID, len(ingress))
-	return nil
-}
-
-var _ ctrl.APIClient = &mockCloudflareClient{}
 
 // ---------------------------------------------------------------------------
 // Integration tests
@@ -258,7 +200,9 @@ func TestIntegration_HTTPRouteAttachment(t *testing.T) {
 
 	// Verify the route is attachable
 	var fetchedGW gwapiv1.Gateway
-	k8sClient.Get(ctx, types.NamespacedName{Name: gw.Name, Namespace: gw.Namespace}, &fetchedGW)
+	if err := k8sClient.Get(ctx, types.NamespacedName{Name: gw.Name, Namespace: gw.Namespace}, &fetchedGW); err != nil {
+		t.Fatalf("failed to get Gateway: %v", err)
+	}
 
 	allowed, err := controller.CheckRouteAttachment(ctx, k8sClient, &fetchedGW, "default", "HTTPRoute")
 	if err != nil {

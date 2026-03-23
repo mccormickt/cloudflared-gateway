@@ -2,8 +2,10 @@ package conformance
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,11 +28,9 @@ func TestMain(m *testing.M) {
 		func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
 			// Install Gateway API CRDs (experimental, includes TLSRoute)
 			cmd := exec.Command("kubectl", "apply", "--server-side", "-f",
-				"https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.1/experimental-install.yaml")
+				fmt.Sprintf("https://github.com/kubernetes-sigs/gateway-api/releases/download/%s/experimental-install.yaml", gatewayAPIVersion()))
 			if out, err := cmd.CombinedOutput(); err != nil {
-				return ctx, err
-			} else {
-				_ = out
+				return ctx, fmt.Errorf("installing Gateway API CRDs: %s: %w", string(out), err)
 			}
 
 			// Wait for CRDs to be established
@@ -44,6 +44,14 @@ func TestMain(m *testing.M) {
 	)
 
 	os.Exit(testenv.Run(m))
+}
+
+func gatewayAPIVersion() string {
+	out, err := exec.Command("go", "list", "-m", "-f", "{{.Version}}", "sigs.k8s.io/gateway-api").Output()
+	if err != nil {
+		panic("failed to find gateway-api module version: " + err.Error())
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // TestGatewayAPIConformance runs the official Gateway API conformance suite.

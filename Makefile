@@ -1,8 +1,9 @@
 BINARY        ?= cloudflare-tunnel-controller
 IMAGE         ?= $(BINARY):dev
-GWAPI_VERSION ?= v1.4.1
+GWAPI_VERSION ?= v1.5.1
 
-KUBEBUILDER_ASSETS ?= $(shell setup-envtest use -p path 2>/dev/null)
+TESTBIN_DIR       ?= $(CURDIR)/testbin
+KUBEBUILDER_ASSETS ?= $(shell setup-envtest use --bin-dir $(TESTBIN_DIR) -p path)
 
 .PHONY: build test test-unit test-integration test-e2e test-conformance test-all vet lint clean image setup-envtest install-crds help
 
@@ -34,16 +35,16 @@ vet: ## Run go vet
 
 lint: vet ## Lint (currently just vet)
 
-setup-envtest: ## Install envtest binaries
+setup-envtest: ## Install envtest binaries into testbin/
 	go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
-	setup-envtest use
+	setup-envtest use --bin-dir $(TESTBIN_DIR)
 
 install-crds: ## Install Gateway API CRDs into current cluster
 	kubectl apply --server-side -f \
 		https://github.com/kubernetes-sigs/gateway-api/releases/download/$(GWAPI_VERSION)/experimental-install.yaml
 
 clean: ## Remove build artifacts
-	rm -rf bin/
+	rm -rf bin/ $(TESTBIN_DIR)
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[32m%-30s\033[0m %s\n", $$1, $$2}'

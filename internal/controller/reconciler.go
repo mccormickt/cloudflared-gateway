@@ -255,15 +255,11 @@ func (r *tunnelReconciler) cleanup(ctx context.Context, gw *gwapiv1.Gateway) err
 	tunnel, err := r.cloudflare.GetTunnelByName(ctx, gw.Name)
 	if err != nil && !errors.Is(err, cfclient.ErrTunnelNotFound) {
 		logger.Error(err, "Cleanup: failed to get tunnel")
-		if firstErr == nil {
-			firstErr = err
-		}
+		firstErr = err
 	} else if err == nil {
 		if err := r.cloudflare.DeleteTunnel(ctx, tunnel.ID); err != nil {
 			logger.Error(err, "Cleanup: failed to delete tunnel")
-			if firstErr == nil {
-				firstErr = err
-			}
+			firstErr = err
 		} else {
 			logger.Info("Cleanup: deleted tunnel", "tunnel_id", tunnel.ID)
 		}

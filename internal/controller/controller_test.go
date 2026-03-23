@@ -29,7 +29,7 @@ import (
 
 type mockCall struct {
 	method string
-	args   []interface{}
+	args   []any
 }
 
 type mockCloudflareClient struct {
@@ -51,7 +51,7 @@ func (m *mockCloudflareClient) withExistingTunnel(id, name string) *mockCloudfla
 	return m
 }
 
-func (m *mockCloudflareClient) record(method string, args ...interface{}) {
+func (m *mockCloudflareClient) record(method string, args ...any) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.calls = append(m.calls, mockCall{method: method, args: args})
@@ -100,9 +100,9 @@ func (m *mockCloudflareClient) UpdateTunnelConfiguration(ctx context.Context, tu
 func testScheme() *runtime.Scheme {
 	s := runtime.NewScheme()
 	clientgoscheme.AddToScheme(s)
-	gwapiv1.AddToScheme(s)
-	gwapiv1alpha2.AddToScheme(s)
-	gwapiv1beta1.AddToScheme(s)
+	gwapiv1.Install(s)
+	gwapiv1alpha2.Install(s)
+	gwapiv1beta1.Install(s)
 	cfv1alpha1.AddToScheme(s)
 	return s
 }
@@ -205,7 +205,7 @@ func TestReconcile_NoMatchingGatewayClass(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Requeue {
+	if result.RequeueAfter > 0 {
 		t.Error("should not requeue")
 	}
 
@@ -241,7 +241,7 @@ func TestReconcile_WrongControllerName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Requeue {
+	if result.RequeueAfter > 0 {
 		t.Error("should not requeue")
 	}
 
@@ -419,7 +419,7 @@ func TestReconcile_GatewayNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Requeue {
+	if result.RequeueAfter > 0 {
 		t.Error("should not requeue for deleted gateway")
 	}
 }
@@ -572,7 +572,7 @@ func TestReconcile_PermanentErrorNoRequeue(t *testing.T) {
 	if err != nil {
 		t.Errorf("permanent error should not be returned, got: %v", err)
 	}
-	if result.Requeue {
+	if result.RequeueAfter > 0 {
 		t.Error("should not requeue for permanent error")
 	}
 }
