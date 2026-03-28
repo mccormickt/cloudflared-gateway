@@ -41,8 +41,8 @@ func TestParseOriginAnnotations_BastionMode(t *testing.T) {
 
 func TestParseOriginAnnotations_Multiple(t *testing.T) {
 	annotations := map[string]string{
-		"tunnels.cloudflare.com/proxy-type":              "socks",
-		"tunnels.cloudflare.com/bastion-mode":            "true",
+		"tunnels.cloudflare.com/proxy-type":               "socks",
+		"tunnels.cloudflare.com/bastion-mode":             "true",
 		"tunnels.cloudflare.com/disable-chunked-encoding": "true",
 		"tunnels.cloudflare.com/keep-alive-connections":   "10",
 		"tunnels.cloudflare.com/keep-alive-timeout":       "30s",

@@ -33,7 +33,8 @@ test-all: test-unit test-integration test-e2e ## Run unit + integration + e2e te
 vet: ## Run go vet
 	go vet ./...
 
-lint: vet ## Lint (currently just vet)
+lint: ## Lint with golangci-lint
+	golangci-lint run ./...
 
 setup-envtest: ## Install envtest binaries into testbin/
 	go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest

@@ -24,9 +24,9 @@ var scheme = runtime.NewScheme()
 func init() {
 	log.SetLogger(zap.New())
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-	utilruntime.Must(gwapiv1.AddToScheme(scheme))
-	utilruntime.Must(gwapiv1alpha2.AddToScheme(scheme))
-	utilruntime.Must(gwapiv1beta1.AddToScheme(scheme))
+	utilruntime.Must(gwapiv1.Install(scheme))
+	utilruntime.Must(gwapiv1alpha2.Install(scheme))
+	utilruntime.Must(gwapiv1beta1.Install(scheme))
 	utilruntime.Must(cfv1alpha1.AddToScheme(scheme))
 }
 

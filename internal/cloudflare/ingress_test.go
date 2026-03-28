@@ -524,7 +524,7 @@ func TestBuildTLSIngressRules_NoBackendRefProduces503(t *testing.T) {
 		},
 		Spec: gwapiv1alpha2.TLSRouteSpec{
 			Hostnames: []gwapiv1.Hostname{hostname("example.com")},
-			Rules: []gwapiv1alpha2.TLSRouteRule{{
+			Rules:     []gwapiv1alpha2.TLSRouteRule{{
 				// No BackendRefs
 			}},
 		},

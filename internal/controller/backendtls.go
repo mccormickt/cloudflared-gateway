@@ -131,7 +131,7 @@ func (r *tunnelReconciler) applyBackendTLSPolicies(ctx context.Context, rules []
 		if !ok {
 			continue
 		}
-		ck := cacheKey{bk.namespace, bk.name}
+		ck := cacheKey(bk)
 		cfg, cached := tlsConfigCache[ck]
 		if !cached {
 			var err error

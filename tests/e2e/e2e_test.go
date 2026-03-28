@@ -13,6 +13,7 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/e2e-framework/pkg/env"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
@@ -38,7 +39,7 @@ func TestMain(m *testing.M) {
 		func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
 			// Install Gateway API CRDs (experimental, includes TLSRoute)
 			// Use --server-side to avoid annotation size limits on large CRDs like HTTPRoute
-			cmd := exec.Command("kubectl", "apply", "--server-side", "-f",
+			cmd := exec.CommandContext(ctx, "kubectl", "apply", "--server-side", "-f",
 				fmt.Sprintf("https://github.com/kubernetes-sigs/gateway-api/releases/download/%s/experimental-install.yaml", gatewayAPIVersion()))
 			out, err := cmd.CombinedOutput()
 			if err != nil {
@@ -59,7 +60,7 @@ func TestMain(m *testing.M) {
 }
 
 func gatewayAPIVersion() string {
-	out, err := exec.Command("go", "list", "-m", "-f", "{{.Version}}", "sigs.k8s.io/gateway-api").Output()
+	out, err := exec.CommandContext(context.Background(), "go", "list", "-m", "-f", "{{.Version}}", "sigs.k8s.io/gateway-api").Output()
 	if err != nil {
 		panic("failed to find gateway-api module version: " + err.Error())
 	}
@@ -73,7 +74,7 @@ func TestE2E_GatewayClassCreation(t *testing.T) {
 			if err != nil {
 				t.Fatalf("creating client: %v", err)
 			}
-			gwapiv1.Install(c.Scheme())
+			utilruntime.Must(gwapiv1.Install(c.Scheme()))
 
 			gc := &gwapiv1.GatewayClass{
 				ObjectMeta: metav1.ObjectMeta{Name: "e2e-cloudflare-tunnel"},
@@ -88,7 +89,7 @@ func TestE2E_GatewayClassCreation(t *testing.T) {
 		}).
 		Assess("GatewayClass exists", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			c, _ := client.New(cfg.Client().RESTConfig(), client.Options{})
-			gwapiv1.Install(c.Scheme())
+			utilruntime.Must(gwapiv1.Install(c.Scheme()))
 
 			var gc gwapiv1.GatewayClass
 			if err := c.Get(ctx, types.NamespacedName{Name: "e2e-cloudflare-tunnel"}, &gc); err != nil {
@@ -101,7 +102,7 @@ func TestE2E_GatewayClassCreation(t *testing.T) {
 		}).
 		Teardown(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			c, _ := client.New(cfg.Client().RESTConfig(), client.Options{})
-			gwapiv1.Install(c.Scheme())
+			utilruntime.Must(gwapiv1.Install(c.Scheme()))
 			c.Delete(ctx, &gwapiv1.GatewayClass{ObjectMeta: metav1.ObjectMeta{Name: "e2e-cloudflare-tunnel"}})
 			return ctx
 		}).
@@ -117,7 +118,7 @@ func TestE2E_GatewayAndHTTPRoute(t *testing.T) {
 			if err != nil {
 				t.Fatalf("creating client: %v", err)
 			}
-			gwapiv1.Install(c.Scheme())
+			utilruntime.Must(gwapiv1.Install(c.Scheme()))
 
 			// Create GatewayClass
 			gc := &gwapiv1.GatewayClass{
@@ -154,7 +155,7 @@ func TestE2E_GatewayAndHTTPRoute(t *testing.T) {
 			svc := &v1.Service{
 				ObjectMeta: metav1.ObjectMeta{Name: "web-svc", Namespace: testNamespace},
 				Spec: v1.ServiceSpec{
-					Ports: []v1.ServicePort{{Port: 80}},
+					Ports:    []v1.ServicePort{{Port: 80}},
 					Selector: map[string]string{"app": "web"},
 				},
 			}
@@ -197,7 +198,7 @@ func TestE2E_GatewayAndHTTPRoute(t *testing.T) {
 		}).
 		Assess("Gateway and HTTPRoute exist", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			c, _ := client.New(cfg.Client().RESTConfig(), client.Options{})
-			gwapiv1.Install(c.Scheme())
+			utilruntime.Must(gwapiv1.Install(c.Scheme()))
 
 			var gw gwapiv1.Gateway
 			if err := c.Get(ctx, types.NamespacedName{Name: "e2e-tunnel", Namespace: testNamespace}, &gw); err != nil {
@@ -217,10 +218,12 @@ func TestE2E_GatewayAndHTTPRoute(t *testing.T) {
 		}).
 		Assess("Resources are valid for controller", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			c, _ := client.New(cfg.Client().RESTConfig(), client.Options{})
-			gwapiv1.Install(c.Scheme())
+			utilruntime.Must(gwapiv1.Install(c.Scheme()))
 
 			var gw gwapiv1.Gateway
-			c.Get(ctx, types.NamespacedName{Name: "e2e-tunnel", Namespace: testNamespace}, &gw)
+			if err := c.Get(ctx, types.NamespacedName{Name: "e2e-tunnel", Namespace: testNamespace}, &gw); err != nil {
+				t.Fatalf("getting Gateway: %v", err)
+			}
 
 			// Verify attachment would work
 			allowed, err := ctrl.CheckRouteAttachment(ctx, c, &gw, testNamespace, "HTTPRoute")
@@ -235,7 +238,7 @@ func TestE2E_GatewayAndHTTPRoute(t *testing.T) {
 		}).
 		Teardown(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			c, _ := client.New(cfg.Client().RESTConfig(), client.Options{})
-			gwapiv1.Install(c.Scheme())
+			utilruntime.Must(gwapiv1.Install(c.Scheme()))
 			c.Delete(ctx, &gwapiv1.HTTPRoute{ObjectMeta: metav1.ObjectMeta{Name: "e2e-route", Namespace: testNamespace}})
 			c.Delete(ctx, &gwapiv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: "e2e-tunnel", Namespace: testNamespace}})
 			c.Delete(ctx, &gwapiv1.GatewayClass{ObjectMeta: metav1.ObjectMeta{Name: "e2e-tunnel-class"}})

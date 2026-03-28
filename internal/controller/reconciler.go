@@ -34,6 +34,7 @@ func (r *tunnelReconciler) Reconcile(ctx context.Context, req reconcile.Request)
 	return result, nil
 }
 
+//nolint:unparam // Result is part of the reconciler contract; will be used for RequeueAfter.
 func (r *tunnelReconciler) reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
 	logger := log.FromContext(ctx).WithValues("gateway", req.NamespacedName)
 	ctx = log.IntoContext(ctx, logger)

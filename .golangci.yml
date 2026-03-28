@@ -1,0 +1,49 @@
+version: "2"
+
+linters:
+  enable:
+    - bodyclose
+    - copyloopvar
+    - durationcheck
+    - errcheck
+    - errname
+    - errorlint
+    - fatcontext
+    - govet
+    - ineffassign
+    - misspell
+    - nilerr
+    - noctx
+    - prealloc
+    - staticcheck
+    - unconvert
+    - unparam
+    - unused
+
+  settings:
+    errcheck:
+      exclude-functions:
+        # Test cleanup — best-effort, errors don't affect test correctness
+        - (sigs.k8s.io/controller-runtime/pkg/client.Client).Delete
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+        - shadow
+    staticcheck:
+      checks:
+        - "all"
+        - "-ST1000"
+        - "-ST1021"
+
+  exclusions:
+    rules:
+      - path: _test\.go$
+        linters:
+          - unparam
+    paths:
+      - zz_generated\..*\.go$
+
+formatters:
+  enable:
+    - gofmt

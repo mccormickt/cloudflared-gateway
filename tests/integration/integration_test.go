@@ -55,13 +55,13 @@ func TestMain(m *testing.M) {
 	}
 
 	code := m.Run()
-	testEnv.Stop()
+	_ = testEnv.Stop()
 	os.Exit(code)
 }
 
 func gatewayAPICRDPath() string {
 	// Use go list to find the module directory — derives version from go.mod
-	out, err := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", "sigs.k8s.io/gateway-api").Output()
+	out, err := exec.CommandContext(context.Background(), "go", "list", "-m", "-f", "{{.Dir}}", "sigs.k8s.io/gateway-api").Output()
 	if err != nil {
 		panic("failed to find gateway-api module directory: " + err.Error())
 	}

@@ -27,7 +27,7 @@ func TestMain(m *testing.M) {
 		envfuncs.CreateCluster(kind.NewProvider(), kindClusterName),
 		func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
 			// Install Gateway API CRDs (experimental, includes TLSRoute)
-			cmd := exec.Command("kubectl", "apply", "--server-side", "-f",
+			cmd := exec.CommandContext(ctx, "kubectl", "apply", "--server-side", "-f",
 				fmt.Sprintf("https://github.com/kubernetes-sigs/gateway-api/releases/download/%s/experimental-install.yaml", gatewayAPIVersion()))
 			if out, err := cmd.CombinedOutput(); err != nil {
 				return ctx, fmt.Errorf("installing Gateway API CRDs: %s: %w", string(out), err)
@@ -47,7 +47,7 @@ func TestMain(m *testing.M) {
 }
 
 func gatewayAPIVersion() string {
-	out, err := exec.Command("go", "list", "-m", "-f", "{{.Version}}", "sigs.k8s.io/gateway-api").Output()
+	out, err := exec.CommandContext(context.Background(), "go", "list", "-m", "-f", "{{.Version}}", "sigs.k8s.io/gateway-api").Output()
 	if err != nil {
 		panic("failed to find gateway-api module version: " + err.Error())
 	}

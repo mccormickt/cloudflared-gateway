@@ -15,6 +15,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -99,11 +100,11 @@ func (m *mockCloudflareClient) UpdateTunnelConfiguration(ctx context.Context, tu
 
 func testScheme() *runtime.Scheme {
 	s := runtime.NewScheme()
-	clientgoscheme.AddToScheme(s)
-	gwapiv1.Install(s)
-	gwapiv1alpha2.Install(s)
-	gwapiv1beta1.Install(s)
-	cfv1alpha1.AddToScheme(s)
+	utilruntime.Must(clientgoscheme.AddToScheme(s))
+	utilruntime.Must(gwapiv1.Install(s))
+	utilruntime.Must(gwapiv1alpha2.Install(s))
+	utilruntime.Must(gwapiv1beta1.Install(s))
+	utilruntime.Must(cfv1alpha1.AddToScheme(s))
 	return s
 }
 
@@ -801,7 +802,7 @@ func TestBuildDeployment_InfrastructureLabels(t *testing.T) {
 		},
 		Annotations: map[gwapiv1.AnnotationKey]gwapiv1.AnnotationValue{
 			"prometheus.io/scrape": "true",
-			"custom.io/owner":     "team-a",
+			"custom.io/owner":      "team-a",
 		},
 	}
 
