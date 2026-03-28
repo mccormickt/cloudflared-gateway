@@ -53,6 +53,18 @@ func BuildCloudflaredDeployment(gw *gwapiv1.Gateway, secretName string) *appsv1.
 						Name:  "cloudflared",
 						Image: ContainerImage,
 						Args:  []string{"tunnel", "--metrics", "0.0.0.0:2000", "run"},
+						SecurityContext: &v1.SecurityContext{
+							AllowPrivilegeEscalation: boolPtr(false),
+							RunAsNonRoot:             boolPtr(true),
+							RunAsUser:                int64Ptr(65532),
+							RunAsGroup:               int64Ptr(65532),
+							Capabilities: &v1.Capabilities{
+								Drop: []v1.Capability{"ALL"},
+							},
+							SeccompProfile: &v1.SeccompProfile{
+								Type: v1.SeccompProfileTypeRuntimeDefault,
+							},
+						},
 						Env: []v1.EnvVar{{
 							Name: "TUNNEL_TOKEN",
 							ValueFrom: &v1.EnvVarSource{

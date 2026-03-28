@@ -67,19 +67,23 @@ func NewGatewayAPIController(mgr manager.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(r.gatewayClassToGateways),
 			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Watches(&gwapiv1.HTTPRoute{},
-			handler.EnqueueRequestsFromMapFunc(routeToGateways))
+			handler.EnqueueRequestsFromMapFunc(routeToGateways),
+			builder.WithPredicates(predicate.GenerationChangedPredicate{}))
 
 	// TLSRoute watch is optional — CRD may not be installed
 	ctrl = ctrl.Watches(&gwapiv1alpha2.TLSRoute{},
-		handler.EnqueueRequestsFromMapFunc(routeToGateways))
+		handler.EnqueueRequestsFromMapFunc(routeToGateways),
+		builder.WithPredicates(predicate.GenerationChangedPredicate{}))
 
 	// GRPCRoute watch — v1 stable
 	ctrl = ctrl.Watches(&gwapiv1.GRPCRoute{},
-		handler.EnqueueRequestsFromMapFunc(routeToGateways))
+		handler.EnqueueRequestsFromMapFunc(routeToGateways),
+		builder.WithPredicates(predicate.GenerationChangedPredicate{}))
 
 	// TCPRoute watch is optional — CRD may not be installed
 	ctrl = ctrl.Watches(&gwapiv1alpha2.TCPRoute{},
-		handler.EnqueueRequestsFromMapFunc(routeToGateways))
+		handler.EnqueueRequestsFromMapFunc(routeToGateways),
+		builder.WithPredicates(predicate.GenerationChangedPredicate{}))
 
 	// BackendTLSPolicy watch — re-enqueue all Gateways on policy changes
 	ctrl = ctrl.Watches(&gwapiv1.BackendTLSPolicy{},

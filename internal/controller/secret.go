@@ -115,3 +115,5 @@ func generateTunnelSecret() ([]byte, error) {
 }
 
 func boolPtr(b bool) *bool { return &b }
+
+func int64Ptr(i int64) *int64 { return &i }

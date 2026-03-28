@@ -43,8 +43,6 @@ type ListenerRouteCount struct {
 
 // PatchGatewayStatus sets Accepted+Programmed conditions and listener statuses.
 func PatchGatewayStatus(ctx context.Context, c client.Client, gw *gwapiv1.Gateway, tunnelID string, listenerCounts []ListenerRouteCount) error {
-	now := metav1.Now()
-
 	acceptedCond := metav1.Condition{
 		Type:               string(gwapiv1.GatewayConditionAccepted),
 		Status:             metav1.ConditionTrue,
@@ -76,7 +74,7 @@ func PatchGatewayStatus(ctx context.Context, c client.Client, gw *gwapiv1.Gatewa
 		}}
 	}
 
-	// Build listener statuses
+	// Build listener statuses, reusing existing listener condition timestamps
 	gw.Status.Listeners = nil
 	for _, lc := range listenerCounts {
 		ls := gwapiv1.ListenerStatus{
@@ -87,7 +85,7 @@ func PatchGatewayStatus(ctx context.Context, c client.Client, gw *gwapiv1.Gatewa
 				Type:               string(gwapiv1.ListenerConditionAccepted),
 				Status:             metav1.ConditionTrue,
 				ObservedGeneration: gw.Generation,
-				LastTransitionTime: now,
+				LastTransitionTime: listenerTransitionTime(gw.Status.Listeners, lc.Name, string(gwapiv1.ListenerConditionAccepted), metav1.ConditionTrue),
 				Reason:             string(gwapiv1.ListenerReasonAccepted),
 				Message:            "Listener is accepted",
 			}},
@@ -125,7 +123,7 @@ func PatchHTTPRouteStatus(ctx context.Context, c client.Client, route *gwapiv1.H
 			Type:               string(gwapiv1.RouteConditionAccepted),
 			Status:             status,
 			ObservedGeneration: route.Generation,
-			LastTransitionTime: metav1.Now(),
+			LastTransitionTime: routeTransitionTime(route.Status.Parents, gwName, gwNS, string(gwapiv1.RouteConditionAccepted), status),
 			Reason:             reason,
 			Message:            message,
 		}},
@@ -162,7 +160,7 @@ func PatchTLSRouteStatus(ctx context.Context, c client.Client, route *gwapiv1alp
 			Type:               string(gwapiv1.RouteConditionAccepted),
 			Status:             status,
 			ObservedGeneration: route.Generation,
-			LastTransitionTime: metav1.Now(),
+			LastTransitionTime: routeTransitionTime(route.Status.Parents, gwName, gwNS, string(gwapiv1.RouteConditionAccepted), status),
 			Reason:             reason,
 			Message:            message,
 		}},
@@ -199,7 +197,7 @@ func PatchTCPRouteStatus(ctx context.Context, c client.Client, route *gwapiv1alp
 			Type:               string(gwapiv1.RouteConditionAccepted),
 			Status:             status,
 			ObservedGeneration: route.Generation,
-			LastTransitionTime: metav1.Now(),
+			LastTransitionTime: routeTransitionTime(route.Status.Parents, gwName, gwNS, string(gwapiv1.RouteConditionAccepted), status),
 			Reason:             reason,
 			Message:            message,
 		}},
@@ -236,7 +234,7 @@ func PatchGRPCRouteStatus(ctx context.Context, c client.Client, route *gwapiv1.G
 			Type:               string(gwapiv1.RouteConditionAccepted),
 			Status:             status,
 			ObservedGeneration: route.Generation,
-			LastTransitionTime: metav1.Now(),
+			LastTransitionTime: routeTransitionTime(route.Status.Parents, gwName, gwNS, string(gwapiv1.RouteConditionAccepted), status),
 			Reason:             reason,
 			Message:            message,
 		}},
@@ -290,6 +288,41 @@ func setCondition(conditions []metav1.Condition, condition metav1.Condition) []m
 		}
 	}
 	return append(conditions, condition)
+}
+
+// listenerTransitionTime returns the existing lastTransitionTime for a listener
+// condition if the type+status match, or metav1.Now() otherwise.
+func listenerTransitionTime(listeners []gwapiv1.ListenerStatus, name gwapiv1.SectionName, condType string, newStatus metav1.ConditionStatus) metav1.Time {
+	for _, l := range listeners {
+		if l.Name != name {
+			continue
+		}
+		for _, c := range l.Conditions {
+			if c.Type == condType && c.Status == newStatus {
+				return c.LastTransitionTime
+			}
+		}
+	}
+	return metav1.Now()
+}
+
+// routeTransitionTime returns the existing lastTransitionTime for a route's parent
+// condition if the type+status match, or metav1.Now() otherwise.
+func routeTransitionTime(parents []gwapiv1.RouteParentStatus, gwName, gwNS, condType string, newStatus metav1.ConditionStatus) metav1.Time {
+	for _, p := range parents {
+		if string(p.ParentRef.Name) != gwName || p.ControllerName != gwapiv1.GatewayController(ControllerName) {
+			continue
+		}
+		if p.ParentRef.Namespace != nil && string(*p.ParentRef.Namespace) != gwNS {
+			continue
+		}
+		for _, c := range p.Conditions {
+			if c.Type == condType && c.Status == newStatus {
+				return c.LastTransitionTime
+			}
+		}
+	}
+	return metav1.Now()
 }
 
 // setParentStatus upserts a RouteParentStatus by gateway name/namespace.
