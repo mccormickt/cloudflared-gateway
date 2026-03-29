@@ -16,12 +16,12 @@ import (
 // applyAccessPolicies looks up CloudflareAccessPolicy resources that target
 // the given Gateway or HTTPRoutes (via GEP-713 Policy Attachment targetRefs),
 // and sets originRequest.access on matching ingress rules.
-func (r *tunnelReconciler) applyAccessPolicies(ctx context.Context, rules []cf.UnvalidatedIngressRule, gw *gwapiv1.Gateway, httpRoutes []gwapiv1.HTTPRoute) ([]cf.UnvalidatedIngressRule, error) {
+func (r *GatewayReconciler) applyAccessPolicies(ctx context.Context, rules []cf.UnvalidatedIngressRule, gw *gwapiv1.Gateway, httpRoutes []gwapiv1.HTTPRoute) ([]cf.UnvalidatedIngressRule, error) {
 	logger := log.FromContext(ctx)
 
 	// List all CloudflareAccessPolicy resources in the Gateway's namespace
 	var policyList cfv1alpha1.CloudflareAccessPolicyList
-	if err := r.client.List(ctx, &policyList, client.InNamespace(gw.Namespace)); err != nil {
+	if err := r.Client.List(ctx, &policyList, client.InNamespace(gw.Namespace)); err != nil {
 		return nil, fmt.Errorf("listing CloudflareAccessPolicy resources: %w", err)
 	}
 
@@ -47,7 +47,7 @@ func (r *tunnelReconciler) applyAccessPolicies(ctx context.Context, rules []cf.U
 		// Set status on matching policies
 		for i := range policyList.Items {
 			if targetsResource(policyList.Items[i].Spec.TargetRefs, gwapiv1.GroupName, "Gateway", gw.Name) {
-				if err := PatchAccessPolicyStatus(ctx, r.client, &policyList.Items[i], true); err != nil {
+				if err := PatchAccessPolicyStatus(ctx, r.Client, &policyList.Items[i], true); err != nil {
 					logger.Error(err, "Failed to patch CloudflareAccessPolicy status", "policy", policyList.Items[i].Name)
 				}
 			}
@@ -100,7 +100,7 @@ func (r *tunnelReconciler) applyAccessPolicies(ctx context.Context, rules []cf.U
 			}
 		}
 		if applied {
-			if err := PatchAccessPolicyStatus(ctx, r.client, policy, true); err != nil {
+			if err := PatchAccessPolicyStatus(ctx, r.Client, policy, true); err != nil {
 				logger.Error(err, "Failed to patch CloudflareAccessPolicy status", "policy", policy.Name)
 			}
 		}

@@ -173,10 +173,10 @@ func TestApplyBackendTLSPolicies(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(policy).Build()
 	mock := newMockClient()
 
-	r := &tunnelReconciler{
-		client:         c,
-		cloudflare:     mock,
-		controllerName: gwapiv1.GatewayController(ControllerName),
+	r := &GatewayReconciler{
+		Client:           c,
+		CloudflareClient: mock,
+		ControllerName:   gwapiv1.GatewayController(ControllerName),
 	}
 
 	p := gwapiv1.PortNumber(8443)

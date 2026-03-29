@@ -42,10 +42,10 @@ func TestApplyAccessPolicies_GatewayTarget(t *testing.T) {
 		WithStatusSubresource(policy).
 		Build()
 	route := makeHTTPRoute("web-route", "default", "test-gw")
-	r := &tunnelReconciler{
-		client:         c,
-		cloudflare:     newMockClient(),
-		controllerName: gwapiv1.GatewayController(ControllerName),
+	r := &GatewayReconciler{
+		Client:           c,
+		CloudflareClient: newMockClient(),
+		ControllerName:   gwapiv1.GatewayController(ControllerName),
 	}
 
 	httpRoutes := []gwapiv1.HTTPRoute{*route}
@@ -84,10 +84,10 @@ func TestApplyAccessPolicies_RouteTarget(t *testing.T) {
 		WithObjects(policy).
 		WithStatusSubresource(policy).
 		Build()
-	r := &tunnelReconciler{
-		client:         c,
-		cloudflare:     newMockClient(),
-		controllerName: gwapiv1.GatewayController(ControllerName),
+	r := &GatewayReconciler{
+		Client:           c,
+		CloudflareClient: newMockClient(),
+		ControllerName:   gwapiv1.GatewayController(ControllerName),
 	}
 
 	httpRoutes := []gwapiv1.HTTPRoute{*route}
@@ -112,10 +112,10 @@ func TestApplyAccessPolicies_NoPolicy(t *testing.T) {
 	route := makeHTTPRoute("web-route", "default", "test-gw")
 
 	c := fake.NewClientBuilder().WithScheme(scheme).Build()
-	r := &tunnelReconciler{
-		client:         c,
-		cloudflare:     newMockClient(),
-		controllerName: gwapiv1.GatewayController(ControllerName),
+	r := &GatewayReconciler{
+		Client:           c,
+		CloudflareClient: newMockClient(),
+		ControllerName:   gwapiv1.GatewayController(ControllerName),
 	}
 
 	httpRoutes := []gwapiv1.HTTPRoute{*route}
@@ -143,10 +143,10 @@ func TestApplyAccessPolicies_PolicyTargetsDifferentGateway(t *testing.T) {
 		WithObjects(policy).
 		WithStatusSubresource(policy).
 		Build()
-	r := &tunnelReconciler{
-		client:         c,
-		cloudflare:     newMockClient(),
-		controllerName: gwapiv1.GatewayController(ControllerName),
+	r := &GatewayReconciler{
+		Client:           c,
+		CloudflareClient: newMockClient(),
+		ControllerName:   gwapiv1.GatewayController(ControllerName),
 	}
 
 	httpRoutes := []gwapiv1.HTTPRoute{*route}
@@ -182,10 +182,10 @@ func TestApplyAccessPolicies_PreservesExistingOriginRequest(t *testing.T) {
 		WithObjects(policy).
 		WithStatusSubresource(policy).
 		Build()
-	r := &tunnelReconciler{
-		client:         c,
-		cloudflare:     newMockClient(),
-		controllerName: gwapiv1.GatewayController(ControllerName),
+	r := &GatewayReconciler{
+		Client:           c,
+		CloudflareClient: newMockClient(),
+		ControllerName:   gwapiv1.GatewayController(ControllerName),
 	}
 
 	httpRoutes := []gwapiv1.HTTPRoute{*route}

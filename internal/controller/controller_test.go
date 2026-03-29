@@ -193,10 +193,10 @@ func TestReconcile_NoMatchingGatewayClass(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(gw).Build()
 	mock := newMockClient()
 
-	r := &tunnelReconciler{
-		client:         c,
-		cloudflare:     mock,
-		controllerName: gwapiv1.GatewayController(ControllerName),
+	r := &GatewayReconciler{
+		Client:           c,
+		CloudflareClient: mock,
+		ControllerName:   gwapiv1.GatewayController(ControllerName),
 	}
 
 	result, err := r.Reconcile(context.Background(), reconcile.Request{
@@ -229,10 +229,10 @@ func TestReconcile_WrongControllerName(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(gw, gc).Build()
 	mock := newMockClient()
 
-	r := &tunnelReconciler{
-		client:         c,
-		cloudflare:     mock,
-		controllerName: gwapiv1.GatewayController(ControllerName),
+	r := &GatewayReconciler{
+		Client:           c,
+		CloudflareClient: mock,
+		ControllerName:   gwapiv1.GatewayController(ControllerName),
 	}
 
 	result, err := r.Reconcile(context.Background(), reconcile.Request{
@@ -263,10 +263,10 @@ func TestReconcile_CreatesNewTunnel(t *testing.T) {
 		Build()
 	mock := newMockClient()
 
-	r := &tunnelReconciler{
-		client:         c,
-		cloudflare:     mock,
-		controllerName: gwapiv1.GatewayController(ControllerName),
+	r := &GatewayReconciler{
+		Client:           c,
+		CloudflareClient: mock,
+		ControllerName:   gwapiv1.GatewayController(ControllerName),
 	}
 
 	_, err := r.Reconcile(context.Background(), reconcile.Request{
@@ -328,10 +328,10 @@ func TestReconcile_ExistingTunnelUpdatesConfig(t *testing.T) {
 		Build()
 	mock := newMockClient().withExistingTunnel("existing-id", "test-gw")
 
-	r := &tunnelReconciler{
-		client:         c,
-		cloudflare:     mock,
-		controllerName: gwapiv1.GatewayController(ControllerName),
+	r := &GatewayReconciler{
+		Client:           c,
+		CloudflareClient: mock,
+		ControllerName:   gwapiv1.GatewayController(ControllerName),
 	}
 
 	_, err := r.Reconcile(context.Background(), reconcile.Request{
@@ -375,10 +375,10 @@ func TestReconcile_HTTPRouteIngressRules(t *testing.T) {
 		Build()
 	mock := newMockClient()
 
-	r := &tunnelReconciler{
-		client:         c,
-		cloudflare:     mock,
-		controllerName: gwapiv1.GatewayController(ControllerName),
+	r := &GatewayReconciler{
+		Client:           c,
+		CloudflareClient: mock,
+		ControllerName:   gwapiv1.GatewayController(ControllerName),
 	}
 
 	_, err := r.Reconcile(context.Background(), reconcile.Request{
@@ -407,10 +407,10 @@ func TestReconcile_GatewayNotFound(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(scheme).Build()
 	mock := newMockClient()
 
-	r := &tunnelReconciler{
-		client:         c,
-		cloudflare:     mock,
-		controllerName: gwapiv1.GatewayController(ControllerName),
+	r := &GatewayReconciler{
+		Client:           c,
+		CloudflareClient: mock,
+		ControllerName:   gwapiv1.GatewayController(ControllerName),
 	}
 
 	result, err := r.Reconcile(context.Background(), reconcile.Request{
@@ -432,10 +432,10 @@ func TestCleanup_BestEffort(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(gw).Build()
 	mock := newMockClient().withExistingTunnel("tunnel-id", "test-gw")
 
-	r := &tunnelReconciler{
-		client:         c,
-		cloudflare:     mock,
-		controllerName: gwapiv1.GatewayController(ControllerName),
+	r := &GatewayReconciler{
+		Client:           c,
+		CloudflareClient: mock,
+		ControllerName:   gwapiv1.GatewayController(ControllerName),
 	}
 
 	err := r.cleanup(context.Background(), gw)
@@ -559,10 +559,10 @@ func TestReconcile_PermanentErrorNoRequeue(t *testing.T) {
 		Build()
 	mock := newMockClient()
 
-	r := &tunnelReconciler{
-		client:         c,
-		cloudflare:     mock,
-		controllerName: gwapiv1.GatewayController(ControllerName),
+	r := &GatewayReconciler{
+		Client:           c,
+		CloudflareClient: mock,
+		ControllerName:   gwapiv1.GatewayController(ControllerName),
 	}
 
 	// Reconcile should return nil error (permanent error is swallowed)
@@ -590,10 +590,10 @@ func TestReconcile_RetriableErrorRequeues(t *testing.T) {
 	mock := newMockClient()
 	mock.createErr = fmt.Errorf("API rate limit exceeded")
 
-	r := &tunnelReconciler{
-		client:         c,
-		cloudflare:     mock,
-		controllerName: gwapiv1.GatewayController(ControllerName),
+	r := &GatewayReconciler{
+		Client:           c,
+		CloudflareClient: mock,
+		ControllerName:   gwapiv1.GatewayController(ControllerName),
 	}
 
 	_, err := r.Reconcile(context.Background(), reconcile.Request{
@@ -962,10 +962,10 @@ func TestCleanup_FailureContinuation(t *testing.T) {
 	mock := newMockClient().withExistingTunnel("tunnel-id", "test-gw")
 	mock.deleteErr = fmt.Errorf("tunnel delete API error")
 
-	r := &tunnelReconciler{
-		client:         c,
-		cloudflare:     mock,
-		controllerName: gwapiv1.GatewayController(ControllerName),
+	r := &GatewayReconciler{
+		Client:           c,
+		CloudflareClient: mock,
+		ControllerName:   gwapiv1.GatewayController(ControllerName),
 	}
 
 	err := r.cleanup(context.Background(), gw)

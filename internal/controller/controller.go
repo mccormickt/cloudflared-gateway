@@ -8,10 +8,11 @@ import (
 	"github.com/mccormickt/cloudflare-tunnel-controller/internal/cloudflare"
 
 	"k8s.io/apimachinery/pkg/fields"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
-	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -24,27 +25,25 @@ const (
 	finalizerName     = "cloudflare-tunnel-controller.jan0ski.net/cleanup"
 )
 
-type tunnelReconciler struct {
-	client         client.Client
-	cloudflare     cloudflare.APIClient
-	controllerName gwapiv1.GatewayController
+// GatewayReconciler reconciles Gateway resources to create and manage Cloudflare Tunnels.
+type GatewayReconciler struct {
+	Client           client.Client
+	CloudflareClient cloudflare.APIClient
+	ControllerName   gwapiv1.GatewayController
 }
 
-var _ reconcile.Reconciler = &tunnelReconciler{}
+var _ reconcile.Reconciler = &GatewayReconciler{}
 
-// NewGatewayAPIController creates a new Gateway API controller that reconciles Gateway resources
-// to create and manage Cloudflare Tunnels.
-func NewGatewayAPIController(mgr manager.Manager) error {
-	api, err := cloudflare.NewClientFromEnv()
-	if err != nil {
-		return fmt.Errorf("creating Cloudflare client: %w", err)
+// SetupWithManager registers the controller with the manager and configures watches.
+// CloudflareClient and ControllerName must be set before calling this method.
+func (r *GatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if r.CloudflareClient == nil {
+		return fmt.Errorf("CloudflareClient is required")
 	}
-
-	r := &tunnelReconciler{
-		client:         mgr.GetClient(),
-		cloudflare:     api,
-		controllerName: gwapiv1.GatewayController(ControllerName),
+	if r.ControllerName == "" {
+		return fmt.Errorf("ControllerName is required")
 	}
+	r.Client = mgr.GetClient()
 
 	// Set up field indexer for Gateway → GatewayClassName
 	if err := mgr.GetFieldIndexer().IndexField(
@@ -60,7 +59,7 @@ func NewGatewayAPIController(mgr manager.Manager) error {
 	}
 
 	// Build controller with watches
-	ctrl := builder.ControllerManagedBy(mgr).
+	c := builder.ControllerManagedBy(mgr).
 		Named("gatewayapi").
 		For(&gwapiv1.Gateway{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Watches(&gwapiv1.GatewayClass{},
@@ -71,40 +70,41 @@ func NewGatewayAPIController(mgr manager.Manager) error {
 			builder.WithPredicates(predicate.GenerationChangedPredicate{}))
 
 	// TLSRoute watch is optional — CRD may not be installed
-	ctrl = ctrl.Watches(&gwapiv1alpha2.TLSRoute{},
+	c = c.Watches(&gwapiv1alpha2.TLSRoute{},
 		handler.EnqueueRequestsFromMapFunc(routeToGateways),
 		builder.WithPredicates(predicate.GenerationChangedPredicate{}))
 
 	// GRPCRoute watch — v1 stable
-	ctrl = ctrl.Watches(&gwapiv1.GRPCRoute{},
+	c = c.Watches(&gwapiv1.GRPCRoute{},
 		handler.EnqueueRequestsFromMapFunc(routeToGateways),
 		builder.WithPredicates(predicate.GenerationChangedPredicate{}))
 
 	// TCPRoute watch is optional — CRD may not be installed
-	ctrl = ctrl.Watches(&gwapiv1alpha2.TCPRoute{},
+	c = c.Watches(&gwapiv1alpha2.TCPRoute{},
 		handler.EnqueueRequestsFromMapFunc(routeToGateways),
 		builder.WithPredicates(predicate.GenerationChangedPredicate{}))
 
 	// BackendTLSPolicy watch — re-enqueue all Gateways on policy changes
-	ctrl = ctrl.Watches(&gwapiv1.BackendTLSPolicy{},
+	c = c.Watches(&gwapiv1.BackendTLSPolicy{},
 		handler.EnqueueRequestsFromMapFunc(r.backendTLSPolicyToGateways))
 
 	// CloudflareAccessPolicy watch — re-enqueue all Gateways on policy changes
-	ctrl = ctrl.Watches(&cfv1alpha1.CloudflareAccessPolicy{},
+	c = c.Watches(&cfv1alpha1.CloudflareAccessPolicy{},
 		handler.EnqueueRequestsFromMapFunc(r.accessPolicyToGateways))
 
-	if err := ctrl.Complete(r); err != nil {
+	if err := c.Complete(r); err != nil {
 		return fmt.Errorf("building controller: %w", err)
 	}
 	return nil
 }
 
 // gatewayClassToGateways maps a GatewayClass change to all Gateways referencing it.
-func (r *tunnelReconciler) gatewayClassToGateways(ctx context.Context, obj client.Object) []reconcile.Request {
+func (r *GatewayReconciler) gatewayClassToGateways(ctx context.Context, obj client.Object) []reconcile.Request {
 	var gateways gwapiv1.GatewayList
-	if err := r.client.List(ctx, &gateways, &client.ListOptions{
+	if err := r.Client.List(ctx, &gateways, &client.ListOptions{
 		FieldSelector: fields.OneTermEqualSelector(classGatewayIndex, obj.GetName()),
 	}); err != nil {
+		log.FromContext(ctx).Error(err, "Failed to list Gateways for GatewayClass", "gatewayClass", obj.GetName())
 		return nil
 	}
 
@@ -168,9 +168,10 @@ func routeToGateways(_ context.Context, obj client.Object) []reconcile.Request {
 // changes. BackendTLSPolicy targets Services, not routes, so finding the exact
 // affected Gateway requires traversing routes. Since policy changes are rare,
 // we simply re-enqueue all Gateways.
-func (r *tunnelReconciler) backendTLSPolicyToGateways(ctx context.Context, _ client.Object) []reconcile.Request {
+func (r *GatewayReconciler) backendTLSPolicyToGateways(ctx context.Context, _ client.Object) []reconcile.Request {
 	var gateways gwapiv1.GatewayList
-	if err := r.client.List(ctx, &gateways); err != nil {
+	if err := r.Client.List(ctx, &gateways); err != nil {
+		log.FromContext(ctx).Error(err, "Failed to list Gateways for BackendTLSPolicy")
 		return nil
 	}
 
@@ -184,12 +185,13 @@ func (r *tunnelReconciler) backendTLSPolicyToGateways(ctx context.Context, _ cli
 }
 
 // accessPolicyToGateways re-enqueues all Gateways when a CloudflareAccessPolicy
-// changes. Since policies are referenced by HTTPRoute ExtensionRef filters,
-// determining the exact affected Gateway requires traversing routes. Policy
-// changes are rare, so we re-enqueue all Gateways.
-func (r *tunnelReconciler) accessPolicyToGateways(ctx context.Context, _ client.Object) []reconcile.Request {
+// changes. Since policies use targetRefs (GEP-713 Policy Attachment) that can
+// target Gateways or HTTPRoutes, determining the exact affected Gateway requires
+// inspecting all policies. Policy changes are rare, so we re-enqueue all Gateways.
+func (r *GatewayReconciler) accessPolicyToGateways(ctx context.Context, _ client.Object) []reconcile.Request {
 	var gateways gwapiv1.GatewayList
-	if err := r.client.List(ctx, &gateways); err != nil {
+	if err := r.Client.List(ctx, &gateways); err != nil {
+		log.FromContext(ctx).Error(err, "Failed to list Gateways for CloudflareAccessPolicy")
 		return nil
 	}
 

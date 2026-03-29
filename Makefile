@@ -4,14 +4,18 @@ GWAPI_VERSION ?= v1.5.1
 
 TESTBIN_DIR       ?= $(CURDIR)/testbin
 KUBEBUILDER_ASSETS ?= $(shell setup-envtest use --bin-dir $(TESTBIN_DIR) -p path)
+CONTROLLER_GEN    ?= $(shell which controller-gen 2>/dev/null)
 
-.PHONY: build test test-unit test-integration test-e2e test-conformance test-all vet lint clean image setup-envtest install-crds help
+.PHONY: build test test-unit test-integration test-e2e test-conformance test-all vet lint clean image setup-envtest install-crds manifests generate run fmt controller-gen help
 
 build: ## Build the controller binary
-	go build -o bin/$(BINARY) .
+	go build -o bin/$(BINARY) ./cmd/
 
 image: ## Build the container image
 	docker build -t $(IMAGE) .
+
+run: ## Run the controller locally
+	go run ./cmd/main.go
 
 test: test-unit ## Run unit tests (default)
 
@@ -30,11 +34,29 @@ test-conformance: ## Run Gateway API conformance suite (requires deployed contro
 
 test-all: test-unit test-integration test-e2e ## Run unit + integration + e2e tests
 
+manifests: controller-gen ## Generate CRD and RBAC manifests from markers
+	$(CONTROLLER_GEN) rbac:roleName=manager-role crd \
+		paths="./..." \
+		output:crd:artifacts:config=config/crd \
+		output:rbac:artifacts:config=config/rbac
+
+generate: controller-gen ## Generate deepcopy methods
+	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./..."
+
+fmt: ## Format Go source files
+	go fmt ./...
+
 vet: ## Run go vet
 	go vet ./...
 
 lint: ## Lint with golangci-lint
 	golangci-lint run ./...
+
+controller-gen: ## Install controller-gen if not present
+ifeq (,$(CONTROLLER_GEN))
+	go install sigs.k8s.io/controller-tools/cmd/controller-gen@latest
+	$(eval CONTROLLER_GEN = $(shell which controller-gen))
+endif
 
 setup-envtest: ## Install envtest binaries into testbin/
 	go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest

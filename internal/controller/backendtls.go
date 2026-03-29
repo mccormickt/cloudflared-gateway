@@ -80,7 +80,7 @@ func buildOriginRequestFromPolicy(policy *gwapiv1.BackendTLSPolicy) *cf.OriginRe
 
 // applyBackendTLSPolicies overrides the originRequest on TLS ingress rules
 // based on BackendTLSPolicy resources targeting the backend services.
-func (r *tunnelReconciler) applyBackendTLSPolicies(ctx context.Context, rules []cf.UnvalidatedIngressRule, tlsRoutes []gwapiv1alpha2.TLSRoute) ([]cf.UnvalidatedIngressRule, error) {
+func (r *GatewayReconciler) applyBackendTLSPolicies(ctx context.Context, rules []cf.UnvalidatedIngressRule, tlsRoutes []gwapiv1alpha2.TLSRoute) ([]cf.UnvalidatedIngressRule, error) {
 	if len(tlsRoutes) == 0 {
 		return rules, nil
 	}
@@ -135,7 +135,7 @@ func (r *tunnelReconciler) applyBackendTLSPolicies(ctx context.Context, rules []
 		cfg, cached := tlsConfigCache[ck]
 		if !cached {
 			var err error
-			cfg, err = GetBackendTLSConfig(ctx, r.client, bk.namespace, bk.name)
+			cfg, err = GetBackendTLSConfig(ctx, r.Client, bk.namespace, bk.name)
 			if err != nil {
 				return nil, err
 			}
