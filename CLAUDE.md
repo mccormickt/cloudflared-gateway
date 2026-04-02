@@ -46,6 +46,7 @@ Cleanup (on Gateway deletion) is best-effort: continues through individual failu
 - **`cmd/`** — Entrypoint (`main.go`), creates manager and wires dependencies
 - **`internal/controller/`** — `GatewayReconciler` with `SetupWithManager`, attachment validation, status patching, secret management, deployment builder
 - **`internal/cloudflare/`** — `APIClient` interface + real impl, ingress rule building, tunnel token assembly
+- **`api/v1alpha1/`** — CloudflareAccessPolicy CRD types (group: `cloudflare.jan0ski.net`)
 - **`config/crd/`** — Generated CRD manifests (via `make manifests`)
 - **`config/rbac/`** — Generated RBAC manifests (via `make manifests`)
 - **`examples/`** — Example Gateway API resources
