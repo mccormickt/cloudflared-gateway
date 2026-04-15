@@ -5,7 +5,7 @@ import (
 	"errors"
 
 	cf "github.com/cloudflare/cloudflare-go"
-	cfclient "github.com/mccormickt/cloudflare-tunnel-controller/internal/cloudflare"
+	cfclient "github.com/mccormickt/cloudflared-gateway/internal/cloudflare"
 
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
@@ -39,6 +39,8 @@ import (
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=backendtlspolicies,verbs=get;list;watch
 // +kubebuilder:rbac:groups=cloudflare.jan0ski.net,resources=cloudflareaccesspolicies,verbs=get;list;watch
 // +kubebuilder:rbac:groups=cloudflare.jan0ski.net,resources=cloudflareaccesspolicies/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 // Reconcile is the error-policy wrapper. Permanent errors are logged and not
 // retried; retriable errors are returned so controller-runtime requeues with

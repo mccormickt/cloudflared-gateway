@@ -1,10 +1,15 @@
-BINARY        ?= cloudflare-tunnel-controller
-IMAGE         ?= $(BINARY):dev
+BINARY        ?= cloudflared-gateway
+IMAGE         ?= ghcr.io/mccormickt/cloudflared-gateway:dev
 GWAPI_VERSION ?= v1.5.1
 
 TESTBIN_DIR       ?= $(CURDIR)/testbin
 KUBEBUILDER_ASSETS ?= $(shell setup-envtest use --bin-dir $(TESTBIN_DIR) -p path)
-CONTROLLER_GEN    ?= $(shell which controller-gen 2>/dev/null)
+
+GOBIN ?= $(shell go env GOBIN)
+ifeq ($(GOBIN),)
+GOBIN := $(shell go env GOPATH)/bin
+endif
+CONTROLLER_GEN ?= $(GOBIN)/controller-gen
 
 .PHONY: build test test-unit test-integration test-e2e test-conformance test-all vet lint clean image setup-envtest install-crds manifests generate run fmt controller-gen help
 
@@ -53,10 +58,7 @@ lint: ## Lint with golangci-lint
 	golangci-lint run ./...
 
 controller-gen: ## Install controller-gen if not present
-ifeq (,$(CONTROLLER_GEN))
-	go install sigs.k8s.io/controller-tools/cmd/controller-gen@latest
-	$(eval CONTROLLER_GEN = $(shell which controller-gen))
-endif
+	@test -x $(CONTROLLER_GEN) || go install sigs.k8s.io/controller-tools/cmd/controller-gen@latest
 
 setup-envtest: ## Install envtest binaries into testbin/
 	go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest

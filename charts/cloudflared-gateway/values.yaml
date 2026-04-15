@@ -1,0 +1,61 @@
+# Controller image
+image:
+  repository: ghcr.io/mccormickt/cloudflared-gateway
+  tag: ""                  # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+replicaCount: 1
+
+# The GatewayClass controllerName this controller claims.
+controllerName: jan0ski.net/cloudflared-gateway
+
+# Cloudflare credentials.
+# Either provide them inline (a Secret will be created) OR set existingSecret
+# to the name of a pre-existing Secret with keys `account-id` and `api-token`.
+cloudflare:
+  accountId: ""
+  apiToken: ""
+  existingSecret: ""
+
+serviceAccount:
+  create: true
+  name: ""                 # defaults to the release fullname
+  annotations: {}
+
+rbac:
+  create: true             # creates ClusterRole + ClusterRoleBinding
+
+# Pod-level security context
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+# Container-level security context
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+  readOnlyRootFilesystem: true
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 256Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+podAnnotations: {}
+podLabels: {}
+
+# Extra env vars for the manager container (merged after CF creds).
+extraEnv: []

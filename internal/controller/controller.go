@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	cfv1alpha1 "github.com/mccormickt/cloudflare-tunnel-controller/api/v1alpha1"
-	"github.com/mccormickt/cloudflare-tunnel-controller/internal/cloudflare"
+	cfv1alpha1 "github.com/mccormickt/cloudflared-gateway/api/v1alpha1"
+	"github.com/mccormickt/cloudflared-gateway/internal/cloudflare"
 
 	"k8s.io/apimachinery/pkg/fields"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -20,9 +20,9 @@ import (
 )
 
 const (
-	ControllerName    = "jan0ski.net/cf-tunnel-controller"
+	ControllerName    = "jan0ski.net/cloudflared-gateway"
 	classGatewayIndex = "classGatewayIndex"
-	finalizerName     = "cloudflare-tunnel-controller.jan0ski.net/cleanup"
+	finalizerName     = "cloudflared-gateway.jan0ski.net/cleanup"
 )
 
 // GatewayReconciler reconciles Gateway resources to create and manage Cloudflare Tunnels.

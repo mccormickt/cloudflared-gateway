@@ -123,7 +123,7 @@ func PatchHTTPRouteStatus(ctx context.Context, c client.Client, route *gwapiv1.H
 			Type:               string(gwapiv1.RouteConditionAccepted),
 			Status:             status,
 			ObservedGeneration: route.Generation,
-			LastTransitionTime: routeTransitionTime(route.Status.Parents, gwName, gwNS, string(gwapiv1.RouteConditionAccepted), status),
+			LastTransitionTime: routeTransitionTime(route.Status.Parents, gwName, gwNS, status),
 			Reason:             reason,
 			Message:            message,
 		}},
@@ -160,7 +160,7 @@ func PatchTLSRouteStatus(ctx context.Context, c client.Client, route *gwapiv1alp
 			Type:               string(gwapiv1.RouteConditionAccepted),
 			Status:             status,
 			ObservedGeneration: route.Generation,
-			LastTransitionTime: routeTransitionTime(route.Status.Parents, gwName, gwNS, string(gwapiv1.RouteConditionAccepted), status),
+			LastTransitionTime: routeTransitionTime(route.Status.Parents, gwName, gwNS, status),
 			Reason:             reason,
 			Message:            message,
 		}},
@@ -197,7 +197,7 @@ func PatchTCPRouteStatus(ctx context.Context, c client.Client, route *gwapiv1alp
 			Type:               string(gwapiv1.RouteConditionAccepted),
 			Status:             status,
 			ObservedGeneration: route.Generation,
-			LastTransitionTime: routeTransitionTime(route.Status.Parents, gwName, gwNS, string(gwapiv1.RouteConditionAccepted), status),
+			LastTransitionTime: routeTransitionTime(route.Status.Parents, gwName, gwNS, status),
 			Reason:             reason,
 			Message:            message,
 		}},
@@ -234,7 +234,7 @@ func PatchGRPCRouteStatus(ctx context.Context, c client.Client, route *gwapiv1.G
 			Type:               string(gwapiv1.RouteConditionAccepted),
 			Status:             status,
 			ObservedGeneration: route.Generation,
-			LastTransitionTime: routeTransitionTime(route.Status.Parents, gwName, gwNS, string(gwapiv1.RouteConditionAccepted), status),
+			LastTransitionTime: routeTransitionTime(route.Status.Parents, gwName, gwNS, status),
 			Reason:             reason,
 			Message:            message,
 		}},
@@ -306,9 +306,9 @@ func listenerTransitionTime(listeners []gwapiv1.ListenerStatus, name gwapiv1.Sec
 	return metav1.Now()
 }
 
-// routeTransitionTime returns the existing lastTransitionTime for a route's parent
-// condition if the type+status match, or metav1.Now() otherwise.
-func routeTransitionTime(parents []gwapiv1.RouteParentStatus, gwName, gwNS, condType string, newStatus metav1.ConditionStatus) metav1.Time {
+// routeTransitionTime returns the existing lastTransitionTime for a route's
+// Accepted parent condition if the status matches, or metav1.Now() otherwise.
+func routeTransitionTime(parents []gwapiv1.RouteParentStatus, gwName, gwNS string, newStatus metav1.ConditionStatus) metav1.Time {
 	for _, p := range parents {
 		if string(p.ParentRef.Name) != gwName || p.ControllerName != gwapiv1.GatewayController(ControllerName) {
 			continue
@@ -317,7 +317,7 @@ func routeTransitionTime(parents []gwapiv1.RouteParentStatus, gwName, gwNS, cond
 			continue
 		}
 		for _, c := range p.Conditions {
-			if c.Type == condType && c.Status == newStatus {
+			if c.Type == string(gwapiv1.RouteConditionAccepted) && c.Status == newStatus {
 				return c.LastTransitionTime
 			}
 		}

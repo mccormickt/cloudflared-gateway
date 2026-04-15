@@ -1,4 +1,4 @@
-module github.com/mccormickt/cloudflare-tunnel-controller
+module github.com/mccormickt/cloudflared-gateway
 
 go 1.25.0
 

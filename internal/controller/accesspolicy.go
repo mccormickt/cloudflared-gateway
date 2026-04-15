@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	cf "github.com/cloudflare/cloudflare-go"
-	cfv1alpha1 "github.com/mccormickt/cloudflare-tunnel-controller/api/v1alpha1"
+	cfv1alpha1 "github.com/mccormickt/cloudflared-gateway/api/v1alpha1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-A Kubernetes Gateway API controller that provisions Cloudflare Tunnels. It watches Gateway API resources (Gateway, GatewayClass, HTTPRoute, GRPCRoute, TLSRoute, TCPRoute, BackendTLSPolicy) and CloudflareAccessPolicy, creates/manages Cloudflare tunnels via their API, deploys `cloudflared` pods, and pushes ingress configurations. The controller name is `jan0ski.net/cf-tunnel-controller`.
+A Kubernetes Gateway API controller that provisions Cloudflare Tunnels. It watches Gateway API resources (Gateway, GatewayClass, HTTPRoute, GRPCRoute, TLSRoute, TCPRoute, BackendTLSPolicy) and CloudflareAccessPolicy, creates/manages Cloudflare tunnels via their API, deploys `cloudflared` pods, and pushes ingress configurations. The controller name is `jan0ski.net/cloudflared-gateway`.
 
 ## Build & Test
 
@@ -29,7 +29,7 @@ go vet ./...            # Static analysis
 
 1. Fetch Gateway by request NamespacedName
 2. Validate GatewayClass controller name (before finalizer to avoid claiming other controllers' Gateways)
-3. Add/remove finalizer (`cloudflare-tunnel-controller.jan0ski.net/cleanup`)
+3. Add/remove finalizer (`cloudflared-gateway.jan0ski.net/cleanup`)
 4. Ensure K8s Secret exists with 32-byte tunnel secret
 5. Create or retrieve Cloudflare tunnel (delete+recreate if secret was regenerated)
 6. Assemble tunnel token: `base64(json({"a": account_id, "t": tunnel_id, "s": base64(secret)}))`
@@ -55,7 +55,7 @@ Cleanup (on Gateway deletion) is best-effort: continues through individual failu
 
 - **`APIClient` interface** — Tunnel CRUD + config push. Real impl wraps `cloudflare-go`; tests use a mock with call recording.
 - **`GatewayReconciler`** — Holds `Client`, `CloudflareClient`, `ControllerName`. Implements `reconcile.Reconciler`. Registered via `SetupWithManager(mgr)`.
-- **Finalizer** (`cloudflare-tunnel-controller.jan0ski.net/cleanup`) — Ensures tunnel + deployment + secret are cleaned up before Gateway deletion.
+- **Finalizer** (`cloudflared-gateway.jan0ski.net/cleanup`) — Ensures tunnel + deployment + secret are cleaned up before Gateway deletion.
 
 ### Route-to-ingress mapping
 
