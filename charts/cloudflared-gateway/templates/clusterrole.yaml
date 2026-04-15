@@ -1,0 +1,42 @@
+{{- if .Values.rbac.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "cloudflared-gateway.fullname" . }}
+  labels:
+    {{- include "cloudflared-gateway.labels" . | nindent 4 }}
+rules:
+- apiGroups: [""]
+  resources: [namespaces]
+  verbs: [get, list]
+- apiGroups: [""]
+  resources: [secrets]
+  verbs: [create, delete, get, list, update]
+- apiGroups: [""]
+  resources: [events]
+  verbs: [create, patch]
+- apiGroups: [coordination.k8s.io]
+  resources: [leases]
+  verbs: [create, delete, get, list, patch, update, watch]
+- apiGroups: [apps]
+  resources: [deployments]
+  verbs: [create, delete, get, list, update]
+- apiGroups: [cloudflare.jan0ski.net]
+  resources: [cloudflareaccesspolicies]
+  verbs: [get, list, watch]
+- apiGroups: [cloudflare.jan0ski.net]
+  resources: [cloudflareaccesspolicies/status]
+  verbs: [get, patch, update]
+- apiGroups: [gateway.networking.k8s.io]
+  resources: [backendtlspolicies, gatewayclasses, grpcroutes, httproutes, referencegrants, tcproutes, tlsroutes]
+  verbs: [get, list, watch]
+- apiGroups: [gateway.networking.k8s.io]
+  resources: [gatewayclasses/status, gateways/status, grpcroutes/status, httproutes/status, tcproutes/status, tlsroutes/status]
+  verbs: [get, patch, update]
+- apiGroups: [gateway.networking.k8s.io]
+  resources: [gateways]
+  verbs: [get, list, update, watch]
+- apiGroups: [gateway.networking.k8s.io]
+  resources: [gateways/finalizers]
+  verbs: [update]
+{{- end }}

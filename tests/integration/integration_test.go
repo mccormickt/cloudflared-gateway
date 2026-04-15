@@ -13,9 +13,9 @@ import (
 	"time"
 
 	cf "github.com/cloudflare/cloudflare-go"
-	cfv1alpha1 "github.com/mccormickt/cloudflare-tunnel-controller/api/v1alpha1"
-	cfclient "github.com/mccormickt/cloudflare-tunnel-controller/internal/cloudflare"
-	controller "github.com/mccormickt/cloudflare-tunnel-controller/internal/controller"
+	cfv1alpha1 "github.com/mccormickt/cloudflared-gateway/api/v1alpha1"
+	cfclient "github.com/mccormickt/cloudflared-gateway/internal/cloudflare"
+	controller "github.com/mccormickt/cloudflared-gateway/internal/controller"
 
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
@@ -491,7 +491,7 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 			if err := k8sClient.Get(ctx, types.NamespacedName{Name: gw.Name, Namespace: gw.Namespace}, &fetched); err != nil {
 				return false
 			}
-			return controllerutil.ContainsFinalizer(&fetched, "cloudflare-tunnel-controller.jan0ski.net/cleanup")
+			return controllerutil.ContainsFinalizer(&fetched, "cloudflared-gateway.jan0ski.net/cleanup")
 		}, 10*time.Second, 100*time.Millisecond, "finalizer should be added to Gateway")
 
 		// Verify tunnel was created via mock
@@ -551,7 +551,7 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 			if err := k8sClient.Get(ctx, types.NamespacedName{Name: gw.Name, Namespace: gw.Namespace}, &fetched); err != nil {
 				return false
 			}
-			return controllerutil.ContainsFinalizer(&fetched, "cloudflare-tunnel-controller.jan0ski.net/cleanup")
+			return controllerutil.ContainsFinalizer(&fetched, "cloudflared-gateway.jan0ski.net/cleanup")
 		}, 10*time.Second, 100*time.Millisecond, "finalizer should be added before deletion")
 
 		// Set existing tunnel so mock returns it during cleanup
@@ -631,7 +631,7 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 		if err := k8sClient.Get(ctx, types.NamespacedName{Name: gw.Name, Namespace: gw.Namespace}, &fetched); err != nil {
 			t.Fatalf("failed to get Gateway: %v", err)
 		}
-		if controllerutil.ContainsFinalizer(&fetched, "cloudflare-tunnel-controller.jan0ski.net/cleanup") {
+		if controllerutil.ContainsFinalizer(&fetched, "cloudflared-gateway.jan0ski.net/cleanup") {
 			t.Error("finalizer should NOT be added to a gateway with a different controller")
 		}
 	})

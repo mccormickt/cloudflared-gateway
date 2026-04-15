@@ -1,0 +1,17 @@
+.git
+.github
+.gitignore
+.golangci.yml
+.dockerignore
+bin/
+testbin/
+charts/
+tests/
+examples/
+config/
+hack/
+docs/
+*.md
+LICENSE
+Dockerfile
+Makefile

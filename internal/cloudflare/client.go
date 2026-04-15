@@ -10,7 +10,7 @@ import (
 	cf "github.com/cloudflare/cloudflare-go"
 )
 
-//go:generate mockgen -destination mock_client.go -package cloudflare github.com/mccormickt/cloudflare-tunnel-controller/internal/cloudflare APIClient
+//go:generate mockgen -destination mock_client.go -package cloudflare github.com/mccormickt/cloudflared-gateway/internal/cloudflare APIClient
 
 // ErrTunnelNotFound is returned when no matching tunnel exists.
 var ErrTunnelNotFound = errors.New("tunnel not found")

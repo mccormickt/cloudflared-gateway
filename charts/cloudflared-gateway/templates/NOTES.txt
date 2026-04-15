@@ -1,0 +1,33 @@
+{{ .Chart.Name }} {{ .Chart.AppVersion }} has been installed into namespace "{{ .Release.Namespace }}".
+
+1. Verify the controller pod is running:
+
+    kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+    kubectl -n {{ .Release.Namespace }} logs -l app.kubernetes.io/instance={{ .Release.Name }} -f
+
+2. Create a GatewayClass that claims this controller:
+
+    apiVersion: gateway.networking.k8s.io/v1
+    kind: GatewayClass
+    metadata:
+      name: cloudflared
+    spec:
+      controllerName: {{ .Values.controllerName }}
+
+3. Create a Gateway and routes attached to it. Once reconciled, the controller
+   provisions a Cloudflare Tunnel and deploys `cloudflared` pods in the Gateway's
+   namespace. Example Gateway + HTTPRoute manifests live in the repo under
+   `examples/`.
+
+4. Find the provisioned tunnel in the Cloudflare dashboard:
+
+    https://one.dash.cloudflare.com/ -> Networks -> Tunnels
+
+{{- if and (not .Values.cloudflare.existingSecret) (not (or .Values.cloudflare.accountId .Values.cloudflare.apiToken)) }}
+
+WARNING: No Cloudflare credentials were configured. The controller will fail
+to start until a Secret named "{{ include "cloudflared-gateway.secretName" . }}"
+exists in namespace "{{ .Release.Namespace }}" with keys `account-id` and
+`api-token`, or until you re-run helm with `--set cloudflare.accountId=...`
+`--set cloudflare.apiToken=...` or `--set cloudflare.existingSecret=...`.
+{{- end }}

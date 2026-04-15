@@ -22,7 +22,7 @@ import (
 	"sigs.k8s.io/e2e-framework/support/kind"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
-	ctrl "github.com/mccormickt/cloudflare-tunnel-controller/internal/controller"
+	ctrl "github.com/mccormickt/cloudflared-gateway/internal/controller"
 )
 
 var testenv env.Environment

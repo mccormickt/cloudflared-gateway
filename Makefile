@@ -1,5 +1,5 @@
-BINARY        ?= cloudflare-tunnel-controller
-IMAGE         ?= $(BINARY):dev
+BINARY        ?= cloudflared-gateway
+IMAGE         ?= ghcr.io/mccormickt/cloudflared-gateway:dev
 GWAPI_VERSION ?= v1.5.1
 
 TESTBIN_DIR       ?= $(CURDIR)/testbin

@@ -3,9 +3,9 @@ package main
 import (
 	"os"
 
-	cfv1alpha1 "github.com/mccormickt/cloudflare-tunnel-controller/api/v1alpha1"
-	"github.com/mccormickt/cloudflare-tunnel-controller/internal/cloudflare"
-	controller "github.com/mccormickt/cloudflare-tunnel-controller/internal/controller"
+	cfv1alpha1 "github.com/mccormickt/cloudflared-gateway/api/v1alpha1"
+	"github.com/mccormickt/cloudflared-gateway/internal/cloudflare"
+	controller "github.com/mccormickt/cloudflared-gateway/internal/controller"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -42,6 +42,8 @@ func main() {
 		Scheme:                 scheme,
 		Logger:                 logger,
 		HealthProbeBindAddress: ":8081",
+		LeaderElection:         true,
+		LeaderElectionID:       "cloudflared-gateway.jan0ski.net",
 	})
 	if err != nil {
 		logger.Error(err, "Error creating manager")

@@ -3,4 +3,4 @@ kind: GatewayClass
 metadata:
   name: cloudflare-tunnel
 spec:
-  controllerName: jan0ski.net/cf-tunnel-controller
+  controllerName: jan0ski.net/cloudflared-gateway

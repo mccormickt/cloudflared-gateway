@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	cfv1alpha1 "github.com/mccormickt/cloudflare-tunnel-controller/api/v1alpha1"
-	cfclient "github.com/mccormickt/cloudflare-tunnel-controller/internal/cloudflare"
+	cfv1alpha1 "github.com/mccormickt/cloudflared-gateway/api/v1alpha1"
+	cfclient "github.com/mccormickt/cloudflared-gateway/internal/cloudflare"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"

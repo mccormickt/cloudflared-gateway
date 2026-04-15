@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	cf "github.com/cloudflare/cloudflare-go"
-	cfv1alpha1 "github.com/mccormickt/cloudflare-tunnel-controller/api/v1alpha1"
-	cfclient "github.com/mccormickt/cloudflare-tunnel-controller/internal/cloudflare"
+	cfv1alpha1 "github.com/mccormickt/cloudflared-gateway/api/v1alpha1"
+	cfclient "github.com/mccormickt/cloudflared-gateway/internal/cloudflare"
 
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"

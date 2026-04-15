@@ -4,7 +4,7 @@ import (
 	"log/slog"
 
 	cf "github.com/cloudflare/cloudflare-go"
-	cfclient "github.com/mccormickt/cloudflare-tunnel-controller/internal/cloudflare"
+	cfclient "github.com/mccormickt/cloudflared-gateway/internal/cloudflare"
 
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gwapiv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
