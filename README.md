@@ -168,6 +168,40 @@ spec:
 
 See [`examples/cloudflare-access-policy.yaml`](examples/cloudflare-access-policy.yaml) for a route-scoped variant.
 
+## Verifying releases
+
+Every release signs the container image, the chart OCI artifact, and the checksums file with [cosign](https://github.com/sigstore/cosign) keyless (GitHub OIDC → Fulcio, logged to Rekor). Pin signatures to the release workflow's OIDC identity.
+
+```sh
+export IDENTITY='^https://github\.com/mccormickt/cloudflared-gateway/\.github/workflows/release\.yml@refs/tags/v.*'
+export ISSUER=https://token.actions.githubusercontent.com
+
+# Image
+cosign verify \
+  --certificate-identity-regexp "$IDENTITY" \
+  --certificate-oidc-issuer "$ISSUER" \
+  ghcr.io/mccormickt/cloudflared-gateway:0.1.0
+
+# Helm chart OCI artifact
+cosign verify \
+  --certificate-identity-regexp "$IDENTITY" \
+  --certificate-oidc-issuer "$ISSUER" \
+  ghcr.io/mccormickt/charts/cloudflared-gateway:0.1.0
+
+# checksums.txt (covers all binary archives and the chart .tgz asset on the Release)
+curl -sLO https://github.com/mccormickt/cloudflared-gateway/releases/download/v0.1.0/checksums.txt
+curl -sLO https://github.com/mccormickt/cloudflared-gateway/releases/download/v0.1.0/checksums.txt.sig
+curl -sLO https://github.com/mccormickt/cloudflared-gateway/releases/download/v0.1.0/checksums.txt.pem
+cosign verify-blob \
+  --certificate checksums.txt.pem \
+  --signature  checksums.txt.sig \
+  --certificate-identity-regexp "$IDENTITY" \
+  --certificate-oidc-issuer "$ISSUER" \
+  checksums.txt
+```
+
+The image also publishes an SPDX SBOM attestation; fetch it with `cosign download sbom ghcr.io/mccormickt/cloudflared-gateway:0.1.0`.
+
 ## Development
 
 ```sh
