@@ -12,22 +12,29 @@ on:
         type: string
 
 jobs:
-  image:
+  release:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      packages: write
+      contents: write   # Create GitHub Release + upload assets
+      packages: write   # Push image + chart to GHCR
+      id-token: write   # Cosign keyless signing via GitHub OIDC
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0   # GoReleaser changelog needs full history
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -36,60 +43,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract image metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/mccormickt/cloudflared-gateway
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest
-
-      - name: Build and push container image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  chart:
-    runs-on: ubuntu-latest
-    needs: image
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
-
-      - name: Set up Helm
-        uses: azure/setup-helm@v4
-
-      - name: Derive chart version from tag
-        id: version
-        run: |
-          REF="${{ github.event.inputs.tag || github.ref_name }}"
-          VERSION="${REF#v}"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-
-      - name: Update Chart.yaml version and appVersion
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          sed -i "s/^version: .*/version: ${VERSION}/" charts/cloudflared-gateway/Chart.yaml
-          sed -i "s/^appVersion: .*/appVersion: \"${VERSION}\"/" charts/cloudflared-gateway/Chart.yaml
-
-      - name: Log in to GHCR Helm registry
+      - name: Log in to Helm OCI registry
         run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
 
-      - name: Package Helm chart
-        run: helm package charts/cloudflared-gateway -d .
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Push Helm chart to GHCR
-        run: helm push cloudflared-gateway-${{ steps.version.outputs.version }}.tgz oci://ghcr.io/mccormickt/charts
+      - name: Publish + sign Helm chart
+        run: bash scripts/publish-chart.sh "${GITHUB_REF_NAME#v}"
+        env:
+          GITHUB_REF_NAME: ${{ github.event.inputs.tag || github.ref_name }}

@@ -1,6 +1,11 @@
 BINARY        ?= cloudflared-gateway
-IMAGE         ?= ghcr.io/mccormickt/cloudflared-gateway:dev
 GWAPI_VERSION ?= v1.5.1
+
+# Dev/ephemeral release tag for ko-push + chart-push targets.
+DEV_TAG       ?= dev-$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+KO_REPO       ?= ghcr.io/mccormickt/cloudflared-gateway
+CHART_OCI     ?= oci://ghcr.io/mccormickt/charts
+KIND_CLUSTER  ?= cloudflared-gateway-dev
 
 TESTBIN_DIR       ?= $(CURDIR)/testbin
 KUBEBUILDER_ASSETS ?= $(shell setup-envtest use --bin-dir $(TESTBIN_DIR) -p path)
@@ -10,14 +15,14 @@ ifeq ($(GOBIN),)
 GOBIN := $(shell go env GOPATH)/bin
 endif
 CONTROLLER_GEN ?= $(GOBIN)/controller-gen
+KO             ?= $(GOBIN)/ko
 
-.PHONY: build test test-unit test-integration test-e2e test-conformance test-all vet lint clean image setup-envtest install-crds manifests generate run fmt controller-gen help
+.PHONY: build test test-unit test-integration test-e2e test-conformance test-all vet lint clean image setup-envtest install-crds manifests generate run fmt controller-gen ko ko-build ko-push chart-package chart-push dev-release kind-up kind-down kind-load kind-install kind-dev help
 
 build: ## Build the controller binary
 	go build -o bin/$(BINARY) ./cmd/
 
-image: ## Build the container image
-	docker build -t $(IMAGE) .
+image: ko-build ## Build container image locally via ko (alias for ko-build)
 
 run: ## Run the controller locally
 	go run ./cmd/main.go
@@ -59,6 +64,53 @@ lint: ## Lint with golangci-lint
 
 controller-gen: ## Install controller-gen if not present
 	@test -x $(CONTROLLER_GEN) || go install sigs.k8s.io/controller-tools/cmd/controller-gen@latest
+
+ko: ## Install ko if not present
+	@test -x $(KO) || go install github.com/google/ko@latest
+
+ko-build: ko ## Build image with ko and load into the local docker daemon as $(KO_REPO):$(DEV_TAG)
+	KO_DOCKER_REPO=$(KO_REPO) $(KO) build ./cmd --bare --tags=$(DEV_TAG) --local
+
+ko-push: ko ## Build+push multi-arch image via ko to $(KO_REPO):$(DEV_TAG)
+	KO_DOCKER_REPO=$(KO_REPO) $(KO) build ./cmd \
+		--bare \
+		--tags=$(DEV_TAG) \
+		--platform=linux/amd64,linux/arm64
+
+chart-package: ## Package the Helm chart into dist/ with version $(DEV_TAG)
+	@mkdir -p dist
+	helm package charts/cloudflared-gateway \
+		--version 0.0.0-$(DEV_TAG) \
+		--app-version $(DEV_TAG) \
+		--destination dist/
+
+chart-push: chart-package ## Package+push Helm chart to $(CHART_OCI) with version $(DEV_TAG)
+	helm push dist/cloudflared-gateway-0.0.0-$(DEV_TAG).tgz $(CHART_OCI)
+
+dev-release: ko-push chart-push ## Push image + chart with dev tag ($(DEV_TAG))
+
+kind-up: ## Create a local kind cluster ($(KIND_CLUSTER)) with Gateway API CRDs installed
+	kind create cluster --name $(KIND_CLUSTER)
+	kubectl apply --server-side -f \
+		https://github.com/kubernetes-sigs/gateway-api/releases/download/$(GWAPI_VERSION)/experimental-install.yaml
+
+kind-down: ## Delete the local kind cluster ($(KIND_CLUSTER))
+	kind delete cluster --name $(KIND_CLUSTER)
+
+kind-load: ko-build ## Build image with ko and load into kind cluster $(KIND_CLUSTER)
+	kind load docker-image $(KO_REPO):$(DEV_TAG) --name $(KIND_CLUSTER)
+
+kind-install: chart-package ## Install the controller into kind via the local chart (needs CLOUDFLARE_* env)
+	@test -n "$$CLOUDFLARE_ACCOUNT_ID" || { echo "CLOUDFLARE_ACCOUNT_ID is required"; exit 1; }
+	@test -n "$$CLOUDFLARE_API_TOKEN"  || { echo "CLOUDFLARE_API_TOKEN is required";  exit 1; }
+	helm upgrade --install cloudflared-gateway dist/cloudflared-gateway-0.0.0-$(DEV_TAG).tgz \
+		--namespace cloudflared-gateway --create-namespace \
+		--set image.repository=$(KO_REPO) \
+		--set image.tag=$(DEV_TAG) \
+		--set cloudflare.accountId=$(CLOUDFLARE_ACCOUNT_ID) \
+		--set cloudflare.apiToken=$(CLOUDFLARE_API_TOKEN)
+
+kind-dev: kind-load kind-install ## Build, load, and install into $(KIND_CLUSTER)
 
 setup-envtest: ## Install envtest binaries into testbin/
 	go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest

@@ -1,0 +1,127 @@
+version: 2
+
+project_name: cloudflared-gateway
+
+builds:
+  - id: manager
+    main: ./cmd
+    binary: manager
+    env:
+      - CGO_ENABLED=0
+    goos: [linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: manager
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    files:
+      - LICENSE
+      - README.md
+
+kos:
+  - id: manager-image
+    build: manager
+    repositories:
+      - ghcr.io/mccormickt/cloudflared-gateway
+    tags:
+      - "{{ .Version }}"
+      - latest
+    base_image: cgr.dev/chainguard/wolfi-base:latest
+    user: "65532"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    bare: true
+    preserve_import_paths: false
+    sbom: spdx
+    creation_time: "{{ .CommitTimestamp }}"
+    ko_data_creation_time: "{{ .CommitTimestamp }}"
+    labels:
+      org.opencontainers.image.source: "https://github.com/mccormickt/cloudflared-gateway"
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.created: "{{ .Date }}"
+      org.opencontainers.image.licenses: "Apache-2.0"
+      org.opencontainers.image.title: "cloudflared-gateway"
+      org.opencontainers.image.description: "Kubernetes Gateway API controller for Cloudflare Tunnels"
+
+docker_signs:
+  - id: ko-signs
+    cmd: cosign
+    artifacts: manifests
+    args:
+      - sign
+      - --yes
+      - "${artifact}@${digest}"
+
+sboms:
+  - artifacts: archive
+
+signs:
+  - cmd: cosign
+    signature: "${artifact}.sig"
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - --yes
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
+      - "${artifact}"
+    artifacts: checksum
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^chore:"
+      - "^test:"
+      - "^ci:"
+  groups:
+    - title: Features
+      regexp: "^feat"
+      order: 0
+    - title: Bug Fixes
+      regexp: "^fix"
+      order: 1
+    - title: Other
+      order: 999
+
+release:
+  github:
+    owner: mccormickt
+    name: cloudflared-gateway
+  draft: false
+  prerelease: auto
+  extra_files:
+    - glob: dist/cloudflared-gateway-*.tgz
+  header: |
+    ## Container image
+
+    ```
+    ghcr.io/mccormickt/cloudflared-gateway:{{ .Version }}
+    ```
+
+    ## Helm chart
+
+    ```sh
+    helm install cloudflared-gateway oci://ghcr.io/mccormickt/charts/cloudflared-gateway \
+      --version {{ .Version }}
+    ```
+
+    Image, chart OCI artifact, and checksums are signed with
+    [cosign](https://github.com/sigstore/cosign) keyless (GitHub OIDC → Fulcio).
+    See the README for verification commands.
+
+before:
+  hooks:
+    - bash scripts/package-chart.sh {{ .Version }}

@@ -176,9 +176,17 @@ make test-unit          # Unit tests (no cluster)
 make test-integration   # envtest integration tests
 make test-e2e           # KinD end-to-end (needs CLOUDFLARE_* env vars)
 make manifests generate # Regenerate CRDs + deepcopy
-make image              # Build container image
+make image              # Build container image locally via ko
 make lint               # golangci-lint
 make run                # Run the controller locally (needs kubeconfig + CF creds)
+```
+
+### Inner-loop on KinD
+
+```sh
+make kind-up            # Create a kind cluster with Gateway API CRDs
+make kind-dev           # ko-build + kind load + helm install (needs CLOUDFLARE_* env)
+make kind-down          # Tear down
 ```
 
 ## Project Layout
