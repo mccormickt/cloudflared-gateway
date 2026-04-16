@@ -7,7 +7,8 @@ set -euo pipefail
 VERSION="${1:?version required (without leading v)}"
 OCI_PARENT="${CHART_OCI_REPO:-oci://ghcr.io/mccormickt/charts}"
 CHART_REPO="${OCI_PARENT#oci://}/cloudflared-gateway"
-TGZ="dist/cloudflared-gateway-${VERSION}.tgz"
+OUT_DIR="${CHART_OUT_DIR:-chart-dist}"
+TGZ="${OUT_DIR}/cloudflared-gateway-${VERSION}.tgz"
 
 [[ -f "${TGZ}" ]] || { echo "Chart tarball not found: ${TGZ}" >&2; exit 1; }
 

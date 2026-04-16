@@ -6,12 +6,13 @@ set -euo pipefail
 
 VERSION="${1:?version required (without leading v)}"
 CHART_DIR="charts/cloudflared-gateway"
+OUT_DIR="${CHART_OUT_DIR:-chart-dist}"
 
-mkdir -p dist
+mkdir -p "${OUT_DIR}"
 
 helm package "${CHART_DIR}" \
   --version "${VERSION}" \
   --app-version "${VERSION}" \
-  --destination dist/
+  --destination "${OUT_DIR}"
 
-echo "Packaged: dist/cloudflared-gateway-${VERSION}.tgz"
+echo "Packaged: ${OUT_DIR}/cloudflared-gateway-${VERSION}.tgz"

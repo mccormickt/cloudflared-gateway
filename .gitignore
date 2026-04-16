@@ -6,3 +6,7 @@
 # Test binaries
 testbin/
 bin/
+
+# Release artifacts
+dist/
+chart-dist/

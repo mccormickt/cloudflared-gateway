@@ -77,15 +77,15 @@ ko-push: ko ## Build+push multi-arch image via ko to $(KO_REPO):$(DEV_TAG)
 		--tags=$(DEV_TAG) \
 		--platform=linux/amd64,linux/arm64
 
-chart-package: ## Package the Helm chart into dist/ with version $(DEV_TAG)
-	@mkdir -p dist
+chart-package: ## Package the Helm chart into chart-dist/ with version $(DEV_TAG)
+	@mkdir -p chart-dist
 	helm package charts/cloudflared-gateway \
 		--version 0.0.0-$(DEV_TAG) \
 		--app-version $(DEV_TAG) \
-		--destination dist/
+		--destination chart-dist/
 
 chart-push: chart-package ## Package+push Helm chart to $(CHART_OCI) with version $(DEV_TAG)
-	helm push dist/cloudflared-gateway-0.0.0-$(DEV_TAG).tgz $(CHART_OCI)
+	helm push chart-dist/cloudflared-gateway-0.0.0-$(DEV_TAG).tgz $(CHART_OCI)
 
 dev-release: ko-push chart-push ## Push image + chart with dev tag ($(DEV_TAG))
 
@@ -103,7 +103,7 @@ kind-load: ko-build ## Build image with ko and load into kind cluster $(KIND_CLU
 kind-install: chart-package ## Install the controller into kind via the local chart (needs CLOUDFLARE_* env)
 	@test -n "$$CLOUDFLARE_ACCOUNT_ID" || { echo "CLOUDFLARE_ACCOUNT_ID is required"; exit 1; }
 	@test -n "$$CLOUDFLARE_API_TOKEN"  || { echo "CLOUDFLARE_API_TOKEN is required";  exit 1; }
-	helm upgrade --install cloudflared-gateway dist/cloudflared-gateway-0.0.0-$(DEV_TAG).tgz \
+	helm upgrade --install cloudflared-gateway chart-dist/cloudflared-gateway-0.0.0-$(DEV_TAG).tgz \
 		--namespace cloudflared-gateway --create-namespace \
 		--set image.repository=$(KO_REPO) \
 		--set image.tag=$(DEV_TAG) \
@@ -121,7 +121,7 @@ install-crds: ## Install Gateway API CRDs into current cluster
 		https://github.com/kubernetes-sigs/gateway-api/releases/download/$(GWAPI_VERSION)/experimental-install.yaml
 
 clean: ## Remove build artifacts
-	rm -rf bin/ $(TESTBIN_DIR)
+	rm -rf bin/ dist/ chart-dist/ $(TESTBIN_DIR)
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[32m%-30s\033[0m %s\n", $$1, $$2}'

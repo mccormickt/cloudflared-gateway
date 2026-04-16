@@ -57,7 +57,7 @@ docker_signs:
     args:
       - sign
       - --yes
-      - "${artifact}@${digest}"
+      - "${artifact}"
 
 sboms:
   - artifacts: archive
@@ -103,7 +103,7 @@ release:
   draft: false
   prerelease: auto
   extra_files:
-    - glob: dist/cloudflared-gateway-*.tgz
+    - glob: chart-dist/cloudflared-gateway-*.tgz
   header: |
     ## Container image
 
