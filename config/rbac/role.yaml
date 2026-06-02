@@ -42,6 +42,8 @@ rules:
   - cloudflare.jan0ski.net
   resources:
   - cloudflareaccesspolicies
+  - cloudflareoriginpolicies
+  - cloudflaretunnelconfigs
   verbs:
   - get
   - list
@@ -50,6 +52,7 @@ rules:
   - cloudflare.jan0ski.net
   resources:
   - cloudflareaccesspolicies/status
+  - cloudflareoriginpolicies/status
   verbs:
   - get
   - patch

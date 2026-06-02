@@ -38,6 +38,9 @@ import (
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=backendtlspolicies,verbs=get;list;watch
 // +kubebuilder:rbac:groups=cloudflare.jan0ski.net,resources=cloudflareaccesspolicies,verbs=get;list;watch
 // +kubebuilder:rbac:groups=cloudflare.jan0ski.net,resources=cloudflareaccesspolicies/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=cloudflare.jan0ski.net,resources=cloudflareoriginpolicies,verbs=get;list;watch
+// +kubebuilder:rbac:groups=cloudflare.jan0ski.net,resources=cloudflareoriginpolicies/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=cloudflare.jan0ski.net,resources=cloudflaretunnelconfigs,verbs=get;list;watch
 // +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
@@ -120,8 +123,15 @@ func (r *GatewayReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *
 		return ConfigError("Gateway has no UID")
 	}
 
-	// Set GatewayClass Accepted status
-	if err := PatchGatewayClassStatus(ctx, r.Client, gc, true); err != nil {
+	// Resolve any CloudflareTunnelConfig referenced from the GatewayClass or
+	// Gateway infrastructure, and reflect GatewayClass-level parameter validity
+	// on the GatewayClass Accepted status.
+	tunnelConfig, classParamsOK, classParamsMsg := r.resolveTunnelConfig(ctx, gw, gc)
+	gcReason, gcMessage := string(gwapiv1.GatewayClassReasonAccepted), "GatewayClass is accepted"
+	if !classParamsOK {
+		gcReason, gcMessage = "InvalidParameters", classParamsMsg
+	}
+	if err := PatchGatewayClassStatus(ctx, r.Client, gc, classParamsOK, gcReason, gcMessage); err != nil {
 		logger.Error(err, "Failed to patch GatewayClass status")
 		return KubeError(err)
 	}
@@ -163,8 +173,8 @@ func (r *GatewayReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *
 		return KubeError(err)
 	}
 
-	// Apply cloudflared deployment
-	deployment := BuildCloudflaredDeployment(gw, secretName)
+	// Apply cloudflared deployment, customized by the resolved CloudflareTunnelConfig.
+	deployment := BuildCloudflaredDeployment(gw, secretName, tunnelConfig)
 	if err := r.applyDeployment(ctx, deployment); err != nil {
 		return KubeError(err)
 	}
@@ -190,6 +200,12 @@ func (r *GatewayReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *
 		return KubeError(err)
 	}
 
+	// Resolve origin-request tuning policies (CloudflareOriginPolicy) once.
+	originPolicies, err := r.listOriginPolicies(ctx, gw.Namespace)
+	if err != nil {
+		return KubeError(err)
+	}
+
 	// Build ingress rules
 	var ingress []cfclient.IngressRule
 	httpRules := cfclient.BuildIngressRules(httpRoutes)
@@ -197,20 +213,20 @@ func (r *GatewayReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *
 	if err != nil {
 		return KubeError(err)
 	}
-	httpRules = applyHTTPRouteAnnotations(httpRules, httpRoutes)
+	httpRules = applyOriginPoliciesHTTP(originPolicies, gw.Name, httpRules, httpRoutes)
 	ingress = append(ingress, httpRules...)
 	grpcRules := cfclient.BuildGRPCIngressRules(grpcRoutes)
-	grpcRules = applyGRPCRouteAnnotations(grpcRules, grpcRoutes)
+	grpcRules = applyOriginPoliciesGRPC(originPolicies, gw.Name, grpcRules, grpcRoutes)
 	ingress = append(ingress, grpcRules...)
 	tlsRules := cfclient.BuildTLSIngressRules(tlsRoutes)
 	tlsRules, err = r.applyBackendTLSPolicies(ctx, tlsRules, tlsRoutes)
 	if err != nil {
 		return KubeError(err)
 	}
-	tlsRules = applyTLSRouteAnnotations(tlsRules, tlsRoutes)
+	tlsRules = applyOriginPoliciesTLS(originPolicies, gw.Name, tlsRules, tlsRoutes)
 	ingress = append(ingress, tlsRules...)
 	tcpRules := cfclient.BuildTCPIngressRules(tcpRoutes)
-	tcpRules = applyTCPRouteAnnotations(tcpRules, tcpRoutes)
+	tcpRules = applyOriginPoliciesTCP(originPolicies, gw.Name, tcpRules, tcpRoutes)
 	ingress = append(ingress, tcpRules...)
 	ingress = append(ingress, cfclient.IngressRule{Service: "http_status:404"})
 
@@ -220,10 +236,30 @@ func (r *GatewayReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *
 	}
 	logger.Info("Pushed tunnel config", "rules", len(ingress))
 
-	// Set route statuses — best-effort all patches, return first error
+	// Patch policy ancestor status first so we know which targets are affected
+	// (used to set the PolicyAffected condition on Gateways and routes).
 	var statusErr error
+	validTargets := validPolicyTargets(gw, httpRoutes, grpcRoutes, tlsRoutes, tcpRoutes)
+	accessAffected, err := r.patchAccessPolicyStatuses(ctx, gw, validTargets)
+	if err != nil {
+		logger.Error(err, "Failed to patch CloudflareAccessPolicy statuses")
+		if statusErr == nil {
+			statusErr = err
+		}
+	}
+	originAffected := r.patchOriginPolicyStatuses(ctx, originPolicies, gw, validTargets)
+	affected := map[string]bool{}
+	for k := range accessAffected {
+		affected[k] = true
+	}
+	for k := range originAffected {
+		affected[k] = true
+	}
+
+	// Set route statuses — best-effort all patches, return first error
 	for i := range httpRoutes {
-		if err := PatchHTTPRouteStatus(ctx, r.Client, &httpRoutes[i], gw.Name, gw.Namespace, true); err != nil {
+		pa := affected[targetKey("HTTPRoute", httpRoutes[i].Name)]
+		if err := PatchHTTPRouteStatus(ctx, r.Client, &httpRoutes[i], gw.Name, gw.Namespace, true, pa); err != nil {
 			logger.Error(err, "Failed to patch HTTPRoute status", "route", httpRoutes[i].Name)
 			if statusErr == nil {
 				statusErr = err
@@ -231,7 +267,8 @@ func (r *GatewayReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *
 		}
 	}
 	for i := range grpcRoutes {
-		if err := PatchGRPCRouteStatus(ctx, r.Client, &grpcRoutes[i], gw.Name, gw.Namespace, true); err != nil {
+		pa := affected[targetKey("GRPCRoute", grpcRoutes[i].Name)]
+		if err := PatchGRPCRouteStatus(ctx, r.Client, &grpcRoutes[i], gw.Name, gw.Namespace, true, pa); err != nil {
 			logger.Error(err, "Failed to patch GRPCRoute status", "route", grpcRoutes[i].Name)
 			if statusErr == nil {
 				statusErr = err
@@ -239,7 +276,8 @@ func (r *GatewayReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *
 		}
 	}
 	for i := range tlsRoutes {
-		if err := PatchTLSRouteStatus(ctx, r.Client, &tlsRoutes[i], gw.Name, gw.Namespace, true); err != nil {
+		pa := affected[targetKey("TLSRoute", tlsRoutes[i].Name)]
+		if err := PatchTLSRouteStatus(ctx, r.Client, &tlsRoutes[i], gw.Name, gw.Namespace, true, pa); err != nil {
 			logger.Error(err, "Failed to patch TLSRoute status", "route", tlsRoutes[i].Name)
 			if statusErr == nil {
 				statusErr = err
@@ -247,13 +285,17 @@ func (r *GatewayReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *
 		}
 	}
 	for i := range tcpRoutes {
-		if err := PatchTCPRouteStatus(ctx, r.Client, &tcpRoutes[i], gw.Name, gw.Namespace, true); err != nil {
+		pa := affected[targetKey("TCPRoute", tcpRoutes[i].Name)]
+		if err := PatchTCPRouteStatus(ctx, r.Client, &tcpRoutes[i], gw.Name, gw.Namespace, true, pa); err != nil {
 			logger.Error(err, "Failed to patch TCPRoute status", "route", tcpRoutes[i].Name)
 			if statusErr == nil {
 				statusErr = err
 			}
 		}
 	}
+
+	// Reflect policy-affected state on the Gateway before its status is written.
+	setGatewayPolicyAffected(gw, affected[targetKey("Gateway", gw.Name)])
 
 	// Compute listener route counts and set Gateway status
 	listenerCounts := computeListenerCounts(gw, httpRoutes, grpcRoutes, tlsRoutes, tcpRoutes)
@@ -327,6 +369,10 @@ func (r *GatewayReconciler) cleanup(ctx context.Context, gw *gwapiv1.Gateway) er
 			logger.Info("Cleanup: deleted secret", "name", secretName)
 		}
 	}
+
+	// Prune this Gateway from policy ancestor status (best-effort; does not block
+	// finalizer removal).
+	r.prunePolicyAncestorStatus(ctx, gw)
 
 	return firstErr
 }
