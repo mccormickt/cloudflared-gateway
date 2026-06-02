@@ -3,21 +3,30 @@ GWAPI_VERSION ?= v1.5.1
 
 # Dev/ephemeral release tag for ko-push + chart-push targets.
 DEV_TAG       ?= dev-$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+KO_VERSION    ?= v0.18.1
 KO_REPO       ?= ghcr.io/mccormickt/cloudflared-gateway
 CHART_OCI     ?= oci://ghcr.io/mccormickt/charts
 KIND_CLUSTER  ?= cloudflared-gateway-dev
+KIND_VERSION  ?= v0.31.0
 
 TESTBIN_DIR       ?= $(CURDIR)/testbin
-KUBEBUILDER_ASSETS ?= $(shell setup-envtest use --bin-dir $(TESTBIN_DIR) -p path)
+# envtest: pin both the setup-envtest binary (controller-runtime 0.23 release
+# branch, go 1.25 / k8s v0.35 compatible) and the k8s control-plane assets.
+ENVTEST_VERSION     ?= release-0.23
+ENVTEST_K8S_VERSION ?= 1.35.0
+KUBEBUILDER_ASSETS ?= $(shell setup-envtest use $(ENVTEST_K8S_VERSION) --bin-dir $(TESTBIN_DIR) -p path)
 
 GOBIN ?= $(shell go env GOBIN)
 ifeq ($(GOBIN),)
 GOBIN := $(shell go env GOPATH)/bin
 endif
-CONTROLLER_GEN ?= $(GOBIN)/controller-gen
+# controller-gen is pinned via the `tool` directive in go.mod and run with
+# `go tool`. v0.20.1 matches the main module's k8s v0.35 / go 1.25 line, so its
+# deps don't perturb the build graph.
+CONTROLLER_GEN ?= go tool controller-gen
 KO             ?= $(GOBIN)/ko
 
-.PHONY: build test test-unit test-integration test-e2e test-conformance test-all vet lint clean image setup-envtest install-crds manifests generate run fmt controller-gen ko ko-build ko-push chart-package chart-push dev-release kind-up kind-down kind-load kind-install kind-dev help
+.PHONY: build test test-unit test-integration test-e2e test-conformance test-all vet lint clean image setup-envtest install-crds manifests generate run fmt ko ko-build ko-push chart-package chart-push dev-release install-kind kind-up kind-down kind-load kind-install kind-dev help
 
 build: ## Build the controller binary
 	go build -o bin/$(BINARY) ./cmd/
@@ -44,13 +53,13 @@ test-conformance: ## Run Gateway API conformance suite (requires deployed contro
 
 test-all: test-unit test-integration test-e2e ## Run unit + integration + e2e tests
 
-manifests: controller-gen ## Generate CRD and RBAC manifests from markers
+manifests: ## Generate CRD and RBAC manifests from markers
 	$(CONTROLLER_GEN) rbac:roleName=manager-role crd \
 		paths="./..." \
 		output:crd:artifacts:config=config/crd \
 		output:rbac:artifacts:config=config/rbac
 
-generate: controller-gen ## Generate deepcopy methods
+generate: ## Generate deepcopy methods
 	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./..."
 
 fmt: ## Format Go source files
@@ -62,11 +71,8 @@ vet: ## Run go vet
 lint: ## Lint with golangci-lint
 	golangci-lint run ./...
 
-controller-gen: ## Install controller-gen if not present
-	@test -x $(CONTROLLER_GEN) || go install sigs.k8s.io/controller-tools/cmd/controller-gen@latest
-
-ko: ## Install ko if not present
-	@test -x $(KO) || go install github.com/google/ko@latest
+ko: ## Install the pinned ko version
+	go install github.com/google/ko@$(KO_VERSION)
 
 ko-build: ko ## Build image with ko and load into the local docker daemon as $(KO_REPO):$(DEV_TAG)
 	KO_DOCKER_REPO=$(KO_REPO) $(KO) build ./cmd --bare --tags=$(DEV_TAG) --local
@@ -88,6 +94,9 @@ chart-push: chart-package ## Package+push Helm chart to $(CHART_OCI) with versio
 	helm push chart-dist/cloudflared-gateway-0.0.0-$(DEV_TAG).tgz $(CHART_OCI)
 
 dev-release: ko-push chart-push ## Push image + chart with dev tag ($(DEV_TAG))
+
+install-kind: ## Install the pinned kind version
+	go install sigs.k8s.io/kind@$(KIND_VERSION)
 
 kind-up: ## Create a local kind cluster ($(KIND_CLUSTER)) with Gateway API CRDs installed
 	kind create cluster --name $(KIND_CLUSTER)
@@ -113,8 +122,8 @@ kind-install: chart-package ## Install the controller into kind via the local ch
 kind-dev: kind-load kind-install ## Build, load, and install into $(KIND_CLUSTER)
 
 setup-envtest: ## Install envtest binaries into testbin/
-	go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
-	setup-envtest use --bin-dir $(TESTBIN_DIR)
+	go install sigs.k8s.io/controller-runtime/tools/setup-envtest@$(ENVTEST_VERSION)
+	setup-envtest use $(ENVTEST_K8S_VERSION) --bin-dir $(TESTBIN_DIR)
 
 install-crds: ## Install Gateway API CRDs into current cluster
 	kubectl apply --server-side -f \
