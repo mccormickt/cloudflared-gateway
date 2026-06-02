@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	cf "github.com/cloudflare/cloudflare-go"
+	cfclient "github.com/mccormickt/cloudflared-gateway/internal/cloudflare"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -80,9 +80,8 @@ func TestGetBackendTLSConfig_SystemCAs(t *testing.T) {
 	if cfg.NoTLSVerify != nil {
 		t.Errorf("noTLSVerify should not be set when using system CAs, got %v", *cfg.NoTLSVerify)
 	}
-	if cfg.CAPool != nil {
-		t.Errorf("caPool should not be set for remote tunnels, got %q", *cfg.CAPool)
-	}
+	// caPool is structurally unrepresentable for remotely-managed tunnels — the
+	// domain OriginRequest type has no such field.
 }
 
 func TestGetBackendTLSConfig_NoPolicyFallback(t *testing.T) {
@@ -156,10 +155,8 @@ func TestGetBackendTLSConfig_WithCACertRefs(t *testing.T) {
 	if cfg.OriginServerName == nil || *cfg.OriginServerName != "backend.internal" {
 		t.Error("expected originServerName to be set from hostname")
 	}
-	// caPool is not supported for remotely-managed tunnels
-	if cfg.CAPool != nil {
-		t.Errorf("caPool should not be set for remote tunnels, got %q", *cfg.CAPool)
-	}
+	// caPool is not supported for remotely-managed tunnels — the domain
+	// OriginRequest type has no such field, so it cannot be set.
 	if cfg.NoTLSVerify != nil {
 		t.Errorf("noTLSVerify should not be set when a policy exists, got %v", *cfg.NoTLSVerify)
 	}
@@ -196,10 +193,10 @@ func TestApplyBackendTLSPolicies(t *testing.T) {
 	}}
 
 	noTLS := true
-	rules := []cf.UnvalidatedIngressRule{{
+	rules := []cfclient.IngressRule{{
 		Hostname:      "secure.example.com",
 		Service:       "https://tls-svc.default:8443",
-		OriginRequest: &cf.OriginRequestConfig{NoTLSVerify: &noTLS},
+		OriginRequest: &cfclient.OriginRequest{NoTLSVerify: &noTLS},
 	}}
 
 	result, err := r.applyBackendTLSPolicies(context.Background(), rules, tlsRoutes)

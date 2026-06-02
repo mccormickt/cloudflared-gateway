@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	cf "github.com/cloudflare/cloudflare-go"
 	cfv1alpha1 "github.com/mccormickt/cloudflared-gateway/api/v1alpha1"
+	cfclient "github.com/mccormickt/cloudflared-gateway/internal/cloudflare"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -16,7 +16,7 @@ import (
 // applyAccessPolicies looks up CloudflareAccessPolicy resources that target
 // the given Gateway or HTTPRoutes (via GEP-713 Policy Attachment targetRefs),
 // and sets originRequest.access on matching ingress rules.
-func (r *GatewayReconciler) applyAccessPolicies(ctx context.Context, rules []cf.UnvalidatedIngressRule, gw *gwapiv1.Gateway, httpRoutes []gwapiv1.HTTPRoute) ([]cf.UnvalidatedIngressRule, error) {
+func (r *GatewayReconciler) applyAccessPolicies(ctx context.Context, rules []cfclient.IngressRule, gw *gwapiv1.Gateway, httpRoutes []gwapiv1.HTTPRoute) ([]cfclient.IngressRule, error) {
 	logger := log.FromContext(ctx)
 
 	// List all CloudflareAccessPolicy resources in the Gateway's namespace
@@ -36,7 +36,7 @@ func (r *GatewayReconciler) applyAccessPolicies(ctx context.Context, rules []cf.
 		// Gateway-level policy: apply to all rules
 		for i := range rules {
 			if rules[i].OriginRequest == nil {
-				rules[i].OriginRequest = &cf.OriginRequestConfig{}
+				rules[i].OriginRequest = &cfclient.OriginRequest{}
 			}
 			rules[i].OriginRequest.Access = gatewayAccessCfg
 		}
@@ -69,7 +69,7 @@ func (r *GatewayReconciler) applyAccessPolicies(ctx context.Context, rules []cf.
 			if routeAccessCfg != nil {
 				for j := 0; j < ruleCount && idx+j < len(rules); j++ {
 					if rules[idx+j].OriginRequest == nil {
-						rules[idx+j].OriginRequest = &cf.OriginRequestConfig{}
+						rules[idx+j].OriginRequest = &cfclient.OriginRequest{}
 					}
 					rules[idx+j].OriginRequest.Access = routeAccessCfg
 				}
@@ -153,13 +153,13 @@ func PatchAccessPolicyStatus(ctx context.Context, c client.Client, policy *cfv1a
 
 // findAccessConfigForTarget searches policies for one targeting the given resource.
 // Uses the None merge strategy (GEP-713 Direct policy): oldest policy wins.
-func findAccessConfigForTarget(policies []cfv1alpha1.CloudflareAccessPolicy, group, kind, name string) *cf.AccessConfig {
+func findAccessConfigForTarget(policies []cfv1alpha1.CloudflareAccessPolicy, group, kind, name string) *cfclient.AccessConfig {
 	for _, policy := range policies {
 		for _, ref := range policy.Spec.TargetRefs {
 			if string(ref.Group) == group &&
 				string(ref.Kind) == kind &&
 				string(ref.Name) == name {
-				return &cf.AccessConfig{
+				return &cfclient.AccessConfig{
 					Required: policy.Spec.Required,
 					TeamName: policy.Spec.TeamName,
 					AudTag:   policy.Spec.AudTag,
