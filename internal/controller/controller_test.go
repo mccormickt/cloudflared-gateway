@@ -6,7 +6,6 @@ import (
 	"sync"
 	"testing"
 
-	cf "github.com/cloudflare/cloudflare-go"
 	cfv1alpha1 "github.com/mccormickt/cloudflared-gateway/api/v1alpha1"
 	cfclient "github.com/mccormickt/cloudflared-gateway/internal/cloudflare"
 
@@ -36,7 +35,7 @@ type mockCall struct {
 type mockCloudflareClient struct {
 	mu             sync.Mutex
 	calls          []mockCall
-	existingTunnel *cf.Tunnel
+	existingTunnel *cfclient.Tunnel
 	accountID      string
 	createErr      error
 	deleteErr      error
@@ -48,7 +47,7 @@ func newMockClient() *mockCloudflareClient {
 }
 
 func (m *mockCloudflareClient) withExistingTunnel(id, name string) *mockCloudflareClient {
-	m.existingTunnel = &cf.Tunnel{ID: id, Name: name}
+	m.existingTunnel = &cfclient.Tunnel{ID: id, Name: name}
 	return m
 }
 
@@ -68,20 +67,20 @@ func (m *mockCloudflareClient) getCalls() []mockCall {
 
 func (m *mockCloudflareClient) AccountID() string { return m.accountID }
 
-func (m *mockCloudflareClient) CreateTunnel(ctx context.Context, name string, secret []byte) (cf.Tunnel, error) {
+func (m *mockCloudflareClient) CreateTunnel(ctx context.Context, name string, secret []byte) (cfclient.Tunnel, error) {
 	m.record("CreateTunnel", name)
 	if m.createErr != nil {
-		return cf.Tunnel{}, m.createErr
+		return cfclient.Tunnel{}, m.createErr
 	}
-	return cf.Tunnel{ID: "mock-tunnel-id", Name: name}, nil
+	return cfclient.Tunnel{ID: "mock-tunnel-id", Name: name}, nil
 }
 
-func (m *mockCloudflareClient) GetTunnelByName(ctx context.Context, name string) (cf.Tunnel, error) {
+func (m *mockCloudflareClient) GetTunnelByName(ctx context.Context, name string) (cfclient.Tunnel, error) {
 	m.record("GetTunnelByName", name)
 	if m.existingTunnel != nil && m.existingTunnel.Name == name {
 		return *m.existingTunnel, nil
 	}
-	return cf.Tunnel{}, cfclient.ErrTunnelNotFound
+	return cfclient.Tunnel{}, cfclient.ErrTunnelNotFound
 }
 
 func (m *mockCloudflareClient) DeleteTunnel(ctx context.Context, id string) error {
@@ -89,7 +88,7 @@ func (m *mockCloudflareClient) DeleteTunnel(ctx context.Context, id string) erro
 	return m.deleteErr
 }
 
-func (m *mockCloudflareClient) UpdateTunnelConfiguration(ctx context.Context, tunnelID string, ingress []cf.UnvalidatedIngressRule) error {
+func (m *mockCloudflareClient) UpdateTunnelConfiguration(ctx context.Context, tunnelID string, ingress []cfclient.IngressRule) error {
 	m.record("UpdateTunnelConfiguration", tunnelID, len(ingress))
 	return m.configErr
 }
@@ -1118,7 +1117,7 @@ func TestApplyHTTPRouteAnnotations_MultiHostname(t *testing.T) {
 			Name:      "multi-host",
 			Namespace: "default",
 			Annotations: map[string]string{
-				"tunnels.cloudflare.com/bastion-mode": "true",
+				"tunnels.cloudflare.com/disable-chunked-encoding": "true",
 			},
 		},
 		Spec: gwapiv1.HTTPRouteSpec{
@@ -1145,13 +1144,13 @@ func TestApplyHTTPRouteAnnotations_MultiHostname(t *testing.T) {
 
 	rules = applyHTTPRouteAnnotations(rules, routes)
 
-	// Both rules should have bastion-mode set
+	// Both rules should have disable-chunked-encoding set
 	for i, rule := range rules {
 		if rule.OriginRequest == nil {
 			t.Fatalf("rule %d: expected originRequest", i)
 		}
-		if rule.OriginRequest.BastionMode == nil || !*rule.OriginRequest.BastionMode {
-			t.Errorf("rule %d: expected bastionMode=true", i)
+		if rule.OriginRequest.DisableChunkedEncoding == nil || !*rule.OriginRequest.DisableChunkedEncoding {
+			t.Errorf("rule %d: expected disableChunkedEncoding=true", i)
 		}
 	}
 }

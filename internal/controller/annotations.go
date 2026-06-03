@@ -3,7 +3,6 @@ package controller
 import (
 	"log/slog"
 
-	cf "github.com/cloudflare/cloudflare-go"
 	cfclient "github.com/mccormickt/cloudflared-gateway/internal/cloudflare"
 
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -13,7 +12,7 @@ import (
 // applyHTTPRouteAnnotations post-processes HTTP ingress rules to merge
 // Cloudflare-specific origin request config from route annotations.
 // Walks routes in the same order as BuildIngressRules to match rules to routes.
-func applyHTTPRouteAnnotations(rules []cf.UnvalidatedIngressRule, httpRoutes []gwapiv1.HTTPRoute) []cf.UnvalidatedIngressRule {
+func applyHTTPRouteAnnotations(rules []cfclient.IngressRule, httpRoutes []gwapiv1.HTTPRoute) []cfclient.IngressRule {
 	if len(httpRoutes) == 0 {
 		return rules
 	}
@@ -49,7 +48,7 @@ func applyHTTPRouteAnnotations(rules []cf.UnvalidatedIngressRule, httpRoutes []g
 
 // applyGRPCRouteAnnotations post-processes gRPC ingress rules to merge
 // Cloudflare-specific origin request config from route annotations.
-func applyGRPCRouteAnnotations(rules []cf.UnvalidatedIngressRule, grpcRoutes []gwapiv1.GRPCRoute) []cf.UnvalidatedIngressRule {
+func applyGRPCRouteAnnotations(rules []cfclient.IngressRule, grpcRoutes []gwapiv1.GRPCRoute) []cfclient.IngressRule {
 	if len(grpcRoutes) == 0 {
 		return rules
 	}
@@ -84,7 +83,7 @@ func applyGRPCRouteAnnotations(rules []cf.UnvalidatedIngressRule, grpcRoutes []g
 
 // applyTLSRouteAnnotations post-processes TLS ingress rules to merge
 // Cloudflare-specific origin request config from route annotations.
-func applyTLSRouteAnnotations(rules []cf.UnvalidatedIngressRule, tlsRoutes []gwapiv1alpha2.TLSRoute) []cf.UnvalidatedIngressRule {
+func applyTLSRouteAnnotations(rules []cfclient.IngressRule, tlsRoutes []gwapiv1alpha2.TLSRoute) []cfclient.IngressRule {
 	if len(tlsRoutes) == 0 {
 		return rules
 	}
@@ -117,7 +116,7 @@ func applyTLSRouteAnnotations(rules []cf.UnvalidatedIngressRule, tlsRoutes []gwa
 
 // applyTCPRouteAnnotations post-processes TCP ingress rules to merge
 // Cloudflare-specific origin request config from route annotations.
-func applyTCPRouteAnnotations(rules []cf.UnvalidatedIngressRule, tcpRoutes []gwapiv1alpha2.TCPRoute) []cf.UnvalidatedIngressRule {
+func applyTCPRouteAnnotations(rules []cfclient.IngressRule, tcpRoutes []gwapiv1alpha2.TCPRoute) []cfclient.IngressRule {
 	if len(tcpRoutes) == 0 {
 		return rules
 	}

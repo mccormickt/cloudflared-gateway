@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	cf "github.com/cloudflare/cloudflare-go"
+	cfclient "github.com/mccormickt/cloudflared-gateway/internal/cloudflare"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -16,7 +16,7 @@ import (
 //
 // If no matching policy is found, it returns noTLSVerify: true for backward
 // compatibility with the previous hardcoded behavior.
-func GetBackendTLSConfig(ctx context.Context, c client.Client, serviceNS, serviceName string) (*cf.OriginRequestConfig, error) {
+func GetBackendTLSConfig(ctx context.Context, c client.Client, serviceNS, serviceName string) (*cfclient.OriginRequest, error) {
 	var policyList gwapiv1.BackendTLSPolicyList
 	if err := c.List(ctx, &policyList, client.InNamespace(serviceNS)); err != nil {
 		return nil, fmt.Errorf("listing BackendTLSPolicies in %s: %w", serviceNS, err)
@@ -30,7 +30,7 @@ func GetBackendTLSConfig(ctx context.Context, c client.Client, serviceNS, servic
 
 	// No matching policy — backward-compatible default
 	noTLS := true
-	return &cf.OriginRequestConfig{NoTLSVerify: &noTLS}, nil
+	return &cfclient.OriginRequest{NoTLSVerify: &noTLS}, nil
 }
 
 // policyTargetsService checks whether any of the policy's targetRefs reference
@@ -60,8 +60,8 @@ func policyTargetsService(refs []gwapiv1.LocalPolicyTargetReferenceWithSectionNa
 //   - caCertificateRefs present → originServerName only (caPool is not supported
 //     for remotely-managed tunnels)
 //   - Neither wellKnownCACerts nor caCertRefs → originServerName only
-func buildOriginRequestFromPolicy(policy *gwapiv1.BackendTLSPolicy) *cf.OriginRequestConfig {
-	cfg := &cf.OriginRequestConfig{}
+func buildOriginRequestFromPolicy(policy *gwapiv1.BackendTLSPolicy) *cfclient.OriginRequest {
+	cfg := &cfclient.OriginRequest{}
 
 	hostname := string(policy.Spec.Validation.Hostname)
 	if hostname != "" {
@@ -80,7 +80,7 @@ func buildOriginRequestFromPolicy(policy *gwapiv1.BackendTLSPolicy) *cf.OriginRe
 
 // applyBackendTLSPolicies overrides the originRequest on TLS ingress rules
 // based on BackendTLSPolicy resources targeting the backend services.
-func (r *GatewayReconciler) applyBackendTLSPolicies(ctx context.Context, rules []cf.UnvalidatedIngressRule, tlsRoutes []gwapiv1alpha2.TLSRoute) ([]cf.UnvalidatedIngressRule, error) {
+func (r *GatewayReconciler) applyBackendTLSPolicies(ctx context.Context, rules []cfclient.IngressRule, tlsRoutes []gwapiv1alpha2.TLSRoute) ([]cfclient.IngressRule, error) {
 	if len(tlsRoutes) == 0 {
 		return rules, nil
 	}
@@ -123,7 +123,7 @@ func (r *GatewayReconciler) applyBackendTLSPolicies(ctx context.Context, rules [
 	// Cache GetBackendTLSConfig results by (namespace, name) to avoid
 	// redundant API calls when multiple rules reference the same backend.
 	type cacheKey struct{ namespace, name string }
-	tlsConfigCache := make(map[cacheKey]*cf.OriginRequestConfig)
+	tlsConfigCache := make(map[cacheKey]*cfclient.OriginRequest)
 
 	// Override originRequest for matching rules
 	for i := range rules {

@@ -362,8 +362,8 @@ func TestBuildIngressRules_BackendTimeout(t *testing.T) {
 	if rules[0].OriginRequest.ConnectTimeout == nil {
 		t.Fatal("expected connectTimeout to be set")
 	}
-	if rules[0].OriginRequest.ConnectTimeout.Duration != 10*time.Second {
-		t.Errorf("connectTimeout: got %v, want 10s", rules[0].OriginRequest.ConnectTimeout.Duration)
+	if *rules[0].OriginRequest.ConnectTimeout != 10*time.Second {
+		t.Errorf("connectTimeout: got %v, want 10s", *rules[0].OriginRequest.ConnectTimeout)
 	}
 }
 
@@ -387,8 +387,8 @@ func TestBuildIngressRules_BackendTimeoutMilliseconds(t *testing.T) {
 	if rules[0].OriginRequest == nil || rules[0].OriginRequest.ConnectTimeout == nil {
 		t.Fatal("expected connectTimeout to be set")
 	}
-	if rules[0].OriginRequest.ConnectTimeout.Duration != 500*time.Millisecond {
-		t.Errorf("connectTimeout: got %v, want 500ms", rules[0].OriginRequest.ConnectTimeout.Duration)
+	if *rules[0].OriginRequest.ConnectTimeout != 500*time.Millisecond {
+		t.Errorf("connectTimeout: got %v, want 500ms", *rules[0].OriginRequest.ConnectTimeout)
 	}
 }
 
@@ -442,7 +442,7 @@ func TestBuildIngressRules_TimeoutWithFilter(t *testing.T) {
 	if rules[0].OriginRequest.HTTPHostHeader == nil || *rules[0].OriginRequest.HTTPHostHeader != "internal.example.com" {
 		t.Errorf("httpHostHeader: got %v", rules[0].OriginRequest.HTTPHostHeader)
 	}
-	if rules[0].OriginRequest.ConnectTimeout == nil || rules[0].OriginRequest.ConnectTimeout.Duration != 30*time.Second {
+	if rules[0].OriginRequest.ConnectTimeout == nil || *rules[0].OriginRequest.ConnectTimeout != 30*time.Second {
 		t.Errorf("connectTimeout: got %v, want 30s", rules[0].OriginRequest.ConnectTimeout)
 	}
 }
@@ -754,7 +754,7 @@ func TestBuildGRPCIngressRules_Http2Origin(t *testing.T) {
 	if rules[0].OriginRequest == nil {
 		t.Fatal("expected originRequest to be set")
 	}
-	if rules[0].OriginRequest.Http2Origin == nil || !*rules[0].OriginRequest.Http2Origin {
+	if rules[0].OriginRequest.HTTP2Origin == nil || !*rules[0].OriginRequest.HTTP2Origin {
 		t.Error("expected http2Origin to be true")
 	}
 }
