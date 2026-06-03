@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"strconv"
 	"time"
-
-	cf "github.com/cloudflare/cloudflare-go"
 )
 
 const annotationPrefix = "tunnels.cloudflare.com/"
@@ -14,26 +12,18 @@ const annotationPrefix = "tunnels.cloudflare.com/"
 // from resource annotations with the tunnels.cloudflare.com/ prefix.
 // Returns the config (or nil if no valid annotations found) and any warnings
 // for annotations that were recognized but had invalid values.
-func ParseOriginAnnotations(annotations map[string]string) (*cf.OriginRequestConfig, []string) {
+func ParseOriginAnnotations(annotations map[string]string) (*OriginRequest, []string) {
 	if len(annotations) == 0 {
 		return nil, nil
 	}
 
-	var cfg cf.OriginRequestConfig
+	var cfg OriginRequest
 	var hasConfig bool
 	var warnings []string
 
 	if v, ok := annotations[annotationPrefix+"proxy-type"]; ok {
 		cfg.ProxyType = &v
 		hasConfig = true
-	}
-	if v, ok := annotations[annotationPrefix+"bastion-mode"]; ok {
-		if b, err := strconv.ParseBool(v); err == nil {
-			cfg.BastionMode = &b
-			hasConfig = true
-		} else {
-			warnings = append(warnings, fmt.Sprintf("invalid bastion-mode value %q: %v", v, err))
-		}
 	}
 	if v, ok := annotations[annotationPrefix+"disable-chunked-encoding"]; ok {
 		if b, err := strconv.ParseBool(v); err == nil {
@@ -53,8 +43,7 @@ func ParseOriginAnnotations(annotations map[string]string) (*cf.OriginRequestCon
 	}
 	if v, ok := annotations[annotationPrefix+"keep-alive-timeout"]; ok {
 		if d, err := time.ParseDuration(v); err == nil {
-			td := cf.TunnelDuration{Duration: d}
-			cfg.KeepAliveTimeout = &td
+			cfg.KeepAliveTimeout = &d
 			hasConfig = true
 		} else {
 			warnings = append(warnings, fmt.Sprintf("invalid keep-alive-timeout value %q: %v", v, err))
@@ -75,9 +64,9 @@ func ParseOriginAnnotations(annotations map[string]string) (*cf.OriginRequestCon
 	return &cfg, warnings
 }
 
-// MergeOriginRequest merges annotation-based config into an existing OriginRequestConfig.
+// MergeOriginRequest merges annotation-based config into an existing OriginRequest.
 // Annotation values do NOT override values already set by filters or policies.
-func MergeOriginRequest(base *cf.OriginRequestConfig, annotations *cf.OriginRequestConfig) *cf.OriginRequestConfig {
+func MergeOriginRequest(base *OriginRequest, annotations *OriginRequest) *OriginRequest {
 	if annotations == nil {
 		return base
 	}
@@ -86,9 +75,6 @@ func MergeOriginRequest(base *cf.OriginRequestConfig, annotations *cf.OriginRequ
 	}
 	if base.ProxyType == nil && annotations.ProxyType != nil {
 		base.ProxyType = annotations.ProxyType
-	}
-	if base.BastionMode == nil && annotations.BastionMode != nil {
-		base.BastionMode = annotations.BastionMode
 	}
 	if base.DisableChunkedEncoding == nil && annotations.DisableChunkedEncoding != nil {
 		base.DisableChunkedEncoding = annotations.DisableChunkedEncoding
