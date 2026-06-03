@@ -10,7 +10,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
-	gwapiv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
 )
 
 // listOriginPolicies returns all CloudflareOriginPolicy resources in a namespace.
@@ -138,103 +137,28 @@ func (r *GatewayReconciler) patchOriginPolicyStatuses(ctx context.Context, polic
 	return affected
 }
 
-// applyOriginPoliciesHTTP merges effective origin config into HTTP ingress rules,
-// walking routes in the same order as BuildIngressRules.
-func applyOriginPoliciesHTTP(policies []cfv1alpha1.CloudflareOriginPolicy, gwName string, rules []cfclient.IngressRule, routes []gwapiv1.HTTPRoute) []cfclient.IngressRule {
-	idx := 0
-	for i := range routes {
-		route := &routes[i]
-		cfg := effectiveOriginRequest(policies, gwName, "HTTPRoute", route.Name)
-		for _, rule := range route.Spec.Rules {
-			n := rulesProduced(len(route.Spec.Hostnames), countPaths(rule.Matches))
-			for j := 0; j < n && idx+j < len(rules); j++ {
-				rules[idx+j].OriginRequest = cfclient.MergeOriginRequest(rules[idx+j].OriginRequest, cfg)
-			}
-			idx += n
+// applyOriginPolicies merges effective origin config into ingress rules by route
+// identity (kind + name), independent of rule order. effectiveOriginRequest is
+// cached per route so repeated rules of one route don't recompute it.
+func applyOriginPolicies(policies []cfv1alpha1.CloudflareOriginPolicy, gwName string, rules []cfclient.BuiltRule) {
+	cache := map[string]*cfclient.OriginRequest{}
+	for i := range rules {
+		key := rules[i].RouteKind + "/" + rules[i].RouteName
+		cfg, ok := cache[key]
+		if !ok {
+			cfg = effectiveOriginRequest(policies, gwName, rules[i].RouteKind, rules[i].RouteName)
+			cache[key] = cfg
 		}
-	}
-	return rules
-}
-
-// applyOriginPoliciesGRPC merges effective origin config into gRPC ingress rules.
-func applyOriginPoliciesGRPC(policies []cfv1alpha1.CloudflareOriginPolicy, gwName string, rules []cfclient.IngressRule, routes []gwapiv1.GRPCRoute) []cfclient.IngressRule {
-	idx := 0
-	for i := range routes {
-		route := &routes[i]
-		cfg := effectiveOriginRequest(policies, gwName, "GRPCRoute", route.Name)
-		for _, rule := range route.Spec.Rules {
-			n := rulesProduced(len(route.Spec.Hostnames), countGRPCPaths(rule.Matches))
-			for j := 0; j < n && idx+j < len(rules); j++ {
-				rules[idx+j].OriginRequest = cfclient.MergeOriginRequest(rules[idx+j].OriginRequest, cfg)
-			}
-			idx += n
-		}
-	}
-	return rules
-}
-
-// applyOriginPoliciesTLS merges effective origin config into TLS ingress rules.
-func applyOriginPoliciesTLS(policies []cfv1alpha1.CloudflareOriginPolicy, gwName string, rules []cfclient.IngressRule, routes []gwapiv1alpha2.TLSRoute) []cfclient.IngressRule {
-	idx := 0
-	for i := range routes {
-		route := &routes[i]
-		cfg := effectiveOriginRequest(policies, gwName, "TLSRoute", route.Name)
-		for range route.Spec.Rules {
-			n := tlsRulesProduced(len(route.Spec.Hostnames))
-			for j := 0; j < n && idx+j < len(rules); j++ {
-				rules[idx+j].OriginRequest = cfclient.MergeOriginRequest(rules[idx+j].OriginRequest, cfg)
-			}
-			idx += n
-		}
-	}
-	return rules
-}
-
-// applyOriginPoliciesTCP merges effective origin config into TCP ingress rules.
-func applyOriginPoliciesTCP(policies []cfv1alpha1.CloudflareOriginPolicy, gwName string, rules []cfclient.IngressRule, routes []gwapiv1alpha2.TCPRoute) []cfclient.IngressRule {
-	idx := 0
-	for i := range routes {
-		route := &routes[i]
-		cfg := effectiveOriginRequest(policies, gwName, "TCPRoute", route.Name)
-		for range route.Spec.Rules {
-			if idx < len(rules) {
-				rules[idx].OriginRequest = cfclient.MergeOriginRequest(rules[idx].OriginRequest, cfg)
-			}
-			idx++
-		}
-	}
-	return rules
-}
-
-// tlsRulesProduced returns how many ingress rules a single TLS route rule
-// produces, matching the logic in BuildTLSIngressRules.
-func tlsRulesProduced(numHostnames int) int {
-	if numHostnames == 0 {
-		return 1
-	}
-	return numHostnames
-}
-
-// countGRPCPaths returns the number of paths extracted from gRPC matches,
-// mirroring the logic in extractGRPCPaths from the cloudflare package.
-func countGRPCPaths(matches []gwapiv1.GRPCRouteMatch) int {
-	count := 0
-	for _, m := range matches {
-		if m.Method == nil {
+		if cfg == nil {
 			continue
 		}
-		svc := ""
-		if m.Method.Service != nil {
-			svc = *m.Method.Service
+		// Merge onto a per-rule base so the in-place MergeOriginRequest never
+		// shares cfg across rules (cfg is a cached, possibly-aliased pointer
+		// used only as the read-only override).
+		base := rules[i].OriginRequest
+		if base == nil {
+			base = &cfclient.OriginRequest{}
 		}
-		method := ""
-		if m.Method.Method != nil {
-			method = *m.Method.Method
-		}
-		if svc == "" && method == "" {
-			continue
-		}
-		count++
+		rules[i].OriginRequest = cfclient.MergeOriginRequest(base, cfg)
 	}
-	return count
 }

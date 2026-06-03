@@ -116,6 +116,37 @@ func TestBuildIngressRules_EmptyRoutes(t *testing.T) {
 	}
 }
 
+// TestBuildAndSort_MostSpecificWins is the golden guard for the
+// shadowing/ordering fix: matches declared least-specific-first must come out
+// most-specific-first after the precedence sort, so Cloudflare's first-match
+// evaluation matches Gateway API's most-specific-wins.
+func TestBuildAndSort_MostSpecificWins(t *testing.T) {
+	route := makeRoute("web", "default",
+		[]gwapiv1.Hostname{hostname("example.com")},
+		[]gwapiv1.HTTPRouteRule{{
+			BackendRefs: []gwapiv1.HTTPBackendRef{makeBackendRef("svc", 80)},
+			Matches: []gwapiv1.HTTPRouteMatch{
+				makePathMatch(gwapiv1.PathMatchPathPrefix, "/"),      // match-all
+				makePathMatch(gwapiv1.PathMatchPathPrefix, "/api"),   // prefix
+				makePathMatch(gwapiv1.PathMatchExact, "/api/health"), // exact
+			},
+		}},
+	)
+
+	rules := BuildIngressRules([]gwapiv1.HTTPRoute{route})
+	SortByPrecedence(rules)
+
+	want := []string{"^/api/health$", "^/api(/.*)?$", ""}
+	if len(rules) != len(want) {
+		t.Fatalf("expected %d rules, got %d", len(want), len(rules))
+	}
+	for i, w := range want {
+		if rules[i].Path != w {
+			t.Errorf("position %d: got path %q, want %q", i, rules[i].Path, w)
+		}
+	}
+}
+
 func TestBuildIngressRules_SingleRouteWithHostnameAndPath(t *testing.T) {
 	route := makeRoute("web", "default",
 		[]gwapiv1.Hostname{hostname("example.com")},
@@ -133,8 +164,8 @@ func TestBuildIngressRules_SingleRouteWithHostnameAndPath(t *testing.T) {
 	if rules[0].Hostname != "example.com" {
 		t.Errorf("hostname: got %q, want %q", rules[0].Hostname, "example.com")
 	}
-	if rules[0].Path != "^/api" {
-		t.Errorf("path: got %q, want %q", rules[0].Path, "^/api")
+	if rules[0].Path != "^/api(/.*)?$" {
+		t.Errorf("path: got %q, want %q", rules[0].Path, "^/api(/.*)?$")
 	}
 	if rules[0].Service != "http://web-svc.default:8080" {
 		t.Errorf("service: got %q, want %q", rules[0].Service, "http://web-svc.default:8080")

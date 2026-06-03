@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
-	"time"
 
 	"sigs.k8s.io/e2e-framework/pkg/env"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
@@ -33,8 +32,11 @@ func TestMain(m *testing.M) {
 				return ctx, fmt.Errorf("installing Gateway API CRDs: %s: %w", string(out), err)
 			}
 
-			// Wait for CRDs to be established
-			time.Sleep(3 * time.Second)
+			// Wait for the CRDs to be Established rather than sleeping a fixed
+			// interval, which races CRD registration on a cold cluster.
+			if err := waitForGatewayCRDs(ctx); err != nil {
+				return ctx, err
+			}
 			return ctx, nil
 		},
 	)
@@ -52,6 +54,32 @@ func gatewayAPIVersion() string {
 		panic("failed to find gateway-api module version: " + err.Error())
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// gatewayCRDs are the Gateway API CRDs the conformance suite depends on.
+var gatewayCRDs = []string{
+	"gatewayclasses.gateway.networking.k8s.io",
+	"gateways.gateway.networking.k8s.io",
+	"httproutes.gateway.networking.k8s.io",
+	"grpcroutes.gateway.networking.k8s.io",
+	"tlsroutes.gateway.networking.k8s.io",
+	"tcproutes.gateway.networking.k8s.io",
+	"referencegrants.gateway.networking.k8s.io",
+	"backendtlspolicies.gateway.networking.k8s.io",
+}
+
+// waitForGatewayCRDs blocks until every Gateway API CRD reports Established.
+func waitForGatewayCRDs(ctx context.Context) error {
+	args := make([]string, 0, 3+len(gatewayCRDs))
+	args = append(args, "wait", "--for=condition=established", "--timeout=90s")
+	for _, name := range gatewayCRDs {
+		args = append(args, "crd/"+name)
+	}
+	cmd := exec.CommandContext(ctx, "kubectl", args...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("waiting for Gateway API CRDs to be established: %s: %w", string(out), err)
+	}
+	return nil
 }
 
 // TestGatewayAPIConformance runs the official Gateway API conformance suite.

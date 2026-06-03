@@ -70,21 +70,63 @@ func PatchGatewayStatus(ctx context.Context, c client.Client, gw *gwapiv1.Gatewa
 		}}
 	}
 
-	// Build listener statuses, reusing existing listener condition timestamps
-	gw.Status.Listeners = nil
+	// Build listener statuses. Capture the previous listener slice first so
+	// listenerTransitionTime can reuse existing timestamps — overwriting
+	// gw.Status.Listeners before reading it would discard every prior timestamp
+	// and thrash LastTransitionTime on every reconcile.
+	prevListeners := gw.Status.Listeners
+	gw.Status.Listeners = make([]gwapiv1.ListenerStatus, 0, len(listenerCounts))
 	for _, lc := range listenerCounts {
+		supportedKinds := supportedKindsForProtocol(lc.Protocol)
+
+		acceptedStatus := metav1.ConditionTrue
+		acceptedReason, acceptedMsg := string(gwapiv1.ListenerReasonAccepted), "Listener is accepted"
+		programmedStatus := metav1.ConditionTrue
+		programmedReason, programmedMsg := string(gwapiv1.ListenerReasonProgrammed), "Listener is programmed"
+		resolvedStatus := metav1.ConditionTrue
+		resolvedReason, resolvedMsg := string(gwapiv1.ListenerReasonResolvedRefs), "All references resolved"
+
+		// A protocol with no supported route kinds is not one this controller
+		// can serve — report it rejected instead of silently accepting it.
+		if len(supportedKinds) == 0 {
+			acceptedStatus = metav1.ConditionFalse
+			acceptedReason, acceptedMsg = string(gwapiv1.ListenerReasonUnsupportedProtocol), fmt.Sprintf("Protocol %q is not supported", lc.Protocol)
+			programmedStatus = metav1.ConditionFalse
+			programmedReason, programmedMsg = string(gwapiv1.ListenerReasonInvalid), "Listener is not programmed: unsupported protocol"
+			resolvedStatus = metav1.ConditionFalse
+			resolvedReason, resolvedMsg = string(gwapiv1.ListenerReasonInvalidRouteKinds), "No supported route kinds for protocol"
+		}
+
 		ls := gwapiv1.ListenerStatus{
 			Name:           lc.Name,
 			AttachedRoutes: lc.Count,
-			SupportedKinds: supportedKindsForProtocol(lc.Protocol),
-			Conditions: []metav1.Condition{{
-				Type:               string(gwapiv1.ListenerConditionAccepted),
-				Status:             metav1.ConditionTrue,
-				ObservedGeneration: gw.Generation,
-				LastTransitionTime: listenerTransitionTime(gw.Status.Listeners, lc.Name, string(gwapiv1.ListenerConditionAccepted), metav1.ConditionTrue),
-				Reason:             string(gwapiv1.ListenerReasonAccepted),
-				Message:            "Listener is accepted",
-			}},
+			SupportedKinds: supportedKinds,
+			Conditions: []metav1.Condition{
+				{
+					Type:               string(gwapiv1.ListenerConditionAccepted),
+					Status:             acceptedStatus,
+					ObservedGeneration: gw.Generation,
+					LastTransitionTime: listenerTransitionTime(prevListeners, lc.Name, string(gwapiv1.ListenerConditionAccepted), acceptedStatus),
+					Reason:             acceptedReason,
+					Message:            acceptedMsg,
+				},
+				{
+					Type:               string(gwapiv1.ListenerConditionProgrammed),
+					Status:             programmedStatus,
+					ObservedGeneration: gw.Generation,
+					LastTransitionTime: listenerTransitionTime(prevListeners, lc.Name, string(gwapiv1.ListenerConditionProgrammed), programmedStatus),
+					Reason:             programmedReason,
+					Message:            programmedMsg,
+				},
+				{
+					Type:               string(gwapiv1.ListenerConditionResolvedRefs),
+					Status:             resolvedStatus,
+					ObservedGeneration: gw.Generation,
+					LastTransitionTime: listenerTransitionTime(prevListeners, lc.Name, string(gwapiv1.ListenerConditionResolvedRefs), resolvedStatus),
+					Reason:             resolvedReason,
+					Message:            resolvedMsg,
+				},
+			},
 		}
 		gw.Status.Listeners = append(gw.Status.Listeners, ls)
 	}
@@ -92,8 +134,22 @@ func PatchGatewayStatus(ctx context.Context, c client.Client, gw *gwapiv1.Gatewa
 	return c.Status().Update(ctx, gw)
 }
 
+// partiallyInvalidRouteCondition reports that a route's match used a dimension
+// Cloudflare tunnels can't enforce (method, header, or query-param match), so
+// routing falls back to hostname+path. Non-fatal: the route stays Accepted.
+func partiallyInvalidRouteCondition(generation int64, existing []gwapiv1.RouteParentStatus, gwName, gwNS string) metav1.Condition {
+	return metav1.Condition{
+		Type:               string(gwapiv1.RouteConditionPartiallyInvalid),
+		Status:             metav1.ConditionTrue,
+		ObservedGeneration: generation,
+		LastTransitionTime: routeCondTransitionTime(existing, gwName, gwNS, string(gwapiv1.RouteConditionPartiallyInvalid), metav1.ConditionTrue),
+		Reason:             string(gwapiv1.RouteReasonUnsupportedValue),
+		Message:            "Some matches use method, header, or query-param dimensions Cloudflare tunnels cannot enforce; routing falls back to hostname and path",
+	}
+}
+
 // PatchHTTPRouteStatus sets the Accepted condition for a specific parentRef on an HTTPRoute.
-func PatchHTTPRouteStatus(ctx context.Context, c client.Client, route *gwapiv1.HTTPRoute, gwName, gwNS string, accepted, accessAffected, originAffected bool) error {
+func PatchHTTPRouteStatus(ctx context.Context, c client.Client, route *gwapiv1.HTTPRoute, gwName, gwNS string, accepted, accessAffected, originAffected, partiallyInvalid bool) error {
 	status := metav1.ConditionTrue
 	reason := string(gwapiv1.RouteReasonAccepted)
 	message := "Route is accepted"
@@ -130,6 +186,9 @@ func PatchHTTPRouteStatus(ctx context.Context, c client.Client, route *gwapiv1.H
 	}
 	if originAffected {
 		parentStatus.Conditions = append(parentStatus.Conditions, policyAffectedRouteCondition(originPolicyAffectedConditionType, "CloudflareOriginPolicy", route.Generation, route.Status.Parents, gwName, gwNS))
+	}
+	if partiallyInvalid {
+		parentStatus.Conditions = append(parentStatus.Conditions, partiallyInvalidRouteCondition(route.Generation, route.Status.Parents, gwName, gwNS))
 	}
 	route.Status.Parents = setParentStatus(route.Status.Parents, parentStatus, gwName, gwNS)
 	return c.Status().Update(ctx, route)
@@ -222,7 +281,7 @@ func PatchTCPRouteStatus(ctx context.Context, c client.Client, route *gwapiv1alp
 }
 
 // PatchGRPCRouteStatus sets the Accepted condition for a specific parentRef on a GRPCRoute.
-func PatchGRPCRouteStatus(ctx context.Context, c client.Client, route *gwapiv1.GRPCRoute, gwName, gwNS string, accepted, accessAffected, originAffected bool) error {
+func PatchGRPCRouteStatus(ctx context.Context, c client.Client, route *gwapiv1.GRPCRoute, gwName, gwNS string, accepted, accessAffected, originAffected, partiallyInvalid bool) error {
 	status := metav1.ConditionTrue
 	reason := string(gwapiv1.RouteReasonAccepted)
 	message := "Route is accepted"
@@ -259,6 +318,9 @@ func PatchGRPCRouteStatus(ctx context.Context, c client.Client, route *gwapiv1.G
 	}
 	if originAffected {
 		parentStatus.Conditions = append(parentStatus.Conditions, policyAffectedRouteCondition(originPolicyAffectedConditionType, "CloudflareOriginPolicy", route.Generation, route.Status.Parents, gwName, gwNS))
+	}
+	if partiallyInvalid {
+		parentStatus.Conditions = append(parentStatus.Conditions, partiallyInvalidRouteCondition(route.Generation, route.Status.Parents, gwName, gwNS))
 	}
 	route.Status.Parents = setParentStatus(route.Status.Parents, parentStatus, gwName, gwNS)
 	return c.Status().Update(ctx, route)

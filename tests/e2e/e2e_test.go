@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
-	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
@@ -45,8 +44,11 @@ func TestMain(m *testing.M) {
 			if err != nil {
 				return ctx, fmt.Errorf("installing Gateway API CRDs: %s: %w", string(out), err)
 			}
-			// Wait for CRDs to be established
-			time.Sleep(2 * time.Second)
+			// Wait for the CRDs to be Established rather than sleeping a fixed
+			// interval, which races CRD registration on a cold cluster.
+			if err := waitForGatewayCRDs(ctx); err != nil {
+				return ctx, err
+			}
 			return ctx, nil
 		},
 	)
@@ -65,6 +67,39 @@ func gatewayAPIVersion() string {
 		panic("failed to find gateway-api module version: " + err.Error())
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// gatewayCRDs are the Gateway API CRDs the controller depends on. Waiting for
+// these to be Established avoids racing CRD registration on a freshly created
+// cluster.
+var gatewayCRDs = []string{
+	"gatewayclasses.gateway.networking.k8s.io",
+	"gateways.gateway.networking.k8s.io",
+	"httproutes.gateway.networking.k8s.io",
+	"grpcroutes.gateway.networking.k8s.io",
+	"tlsroutes.gateway.networking.k8s.io",
+	"tcproutes.gateway.networking.k8s.io",
+	"referencegrants.gateway.networking.k8s.io",
+	"backendtlspolicies.gateway.networking.k8s.io",
+}
+
+// waitForGatewayCRDs blocks until every Gateway API CRD the controller uses
+// reports the Established condition.
+func waitForGatewayCRDs(ctx context.Context) error {
+	args := append([]string{"wait", "--for=condition=established", "--timeout=90s"}, crdResourceArgs()...)
+	cmd := exec.CommandContext(ctx, "kubectl", args...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("waiting for Gateway API CRDs to be established: %s: %w", string(out), err)
+	}
+	return nil
+}
+
+func crdResourceArgs() []string {
+	args := make([]string, 0, len(gatewayCRDs))
+	for _, name := range gatewayCRDs {
+		args = append(args, "crd/"+name)
+	}
+	return args
 }
 
 func TestE2E_GatewayClassCreation(t *testing.T) {

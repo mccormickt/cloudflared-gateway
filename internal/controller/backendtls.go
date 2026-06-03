@@ -80,7 +80,7 @@ func buildOriginRequestFromPolicy(policy *gwapiv1.BackendTLSPolicy) *cfclient.Or
 
 // applyBackendTLSPolicies overrides the originRequest on TLS ingress rules
 // based on BackendTLSPolicy resources targeting the backend services.
-func (r *GatewayReconciler) applyBackendTLSPolicies(ctx context.Context, rules []cfclient.IngressRule, tlsRoutes []gwapiv1alpha2.TLSRoute) ([]cfclient.IngressRule, error) {
+func (r *GatewayReconciler) applyBackendTLSPolicies(ctx context.Context, rules []cfclient.BuiltRule, tlsRoutes []gwapiv1alpha2.TLSRoute) ([]cfclient.BuiltRule, error) {
 	if len(tlsRoutes) == 0 {
 		return rules, nil
 	}
@@ -141,7 +141,12 @@ func (r *GatewayReconciler) applyBackendTLSPolicies(ctx context.Context, rules [
 			}
 			tlsConfigCache[ck] = cfg
 		}
-		rules[i].OriginRequest = cfg
+		// Assign a per-rule copy, not the shared cache pointer: a later
+		// MergeOriginRequest (e.g. applyOriginPoliciesTLS) mutates the rule's
+		// OriginRequest in place, which would otherwise bleed one route's origin
+		// policy into every other rule sharing the same backend.
+		cfgCopy := *cfg
+		rules[i].OriginRequest = &cfgCopy
 	}
 
 	return rules, nil

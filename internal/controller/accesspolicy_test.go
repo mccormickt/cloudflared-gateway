@@ -52,7 +52,7 @@ func TestApplyAccessPolicies_GatewayTarget(t *testing.T) {
 	httpRoutes := []gwapiv1.HTTPRoute{*route}
 	rules := cfclient.BuildIngressRules(httpRoutes)
 
-	rules, err := r.applyAccessPolicies(context.Background(), rules, gw, httpRoutes)
+	rules, err := r.applyAccessPolicies(context.Background(), rules, gw)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestApplyAccessPolicies_RouteTarget(t *testing.T) {
 	httpRoutes := []gwapiv1.HTTPRoute{*route}
 	rules := cfclient.BuildIngressRules(httpRoutes)
 
-	rules, err := r.applyAccessPolicies(context.Background(), rules, gw, httpRoutes)
+	rules, err := r.applyAccessPolicies(context.Background(), rules, gw)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestApplyAccessPolicies_NoPolicy(t *testing.T) {
 	httpRoutes := []gwapiv1.HTTPRoute{*route}
 	rules := cfclient.BuildIngressRules(httpRoutes)
 
-	rules, err := r.applyAccessPolicies(context.Background(), rules, gw, httpRoutes)
+	rules, err := r.applyAccessPolicies(context.Background(), rules, gw)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestApplyAccessPolicies_PolicyTargetsDifferentGateway(t *testing.T) {
 	httpRoutes := []gwapiv1.HTTPRoute{*route}
 	rules := cfclient.BuildIngressRules(httpRoutes)
 
-	rules, err := r.applyAccessPolicies(context.Background(), rules, gw, httpRoutes)
+	rules, err := r.applyAccessPolicies(context.Background(), rules, gw)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -192,7 +192,7 @@ func TestApplyAccessPolicies_PreservesExistingOriginRequest(t *testing.T) {
 	httpRoutes := []gwapiv1.HTTPRoute{*route}
 	rules := cfclient.BuildIngressRules(httpRoutes)
 
-	rules, err := r.applyAccessPolicies(context.Background(), rules, gw, httpRoutes)
+	rules, err := r.applyAccessPolicies(context.Background(), rules, gw)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -350,55 +350,5 @@ func TestPrunePolicyAncestorStatus_OnCleanup(t *testing.T) {
 	}
 	if len(gotOrigin.Status.Ancestors) != 0 {
 		t.Errorf("expected origin policy ancestor pruned, got %d", len(gotOrigin.Status.Ancestors))
-	}
-}
-
-func TestRulesProduced(t *testing.T) {
-	tests := []struct {
-		name         string
-		numHostnames int
-		numPaths     int
-		expected     int
-	}{
-		{"no hostnames, no paths", 0, 0, 1},
-		{"no hostnames, 2 paths", 0, 2, 2},
-		{"2 hostnames, no paths", 2, 0, 2},
-		{"2 hostnames, 3 paths", 2, 3, 6},
-		{"1 hostname, 1 path", 1, 1, 1},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := rulesProduced(tt.numHostnames, tt.numPaths); got != tt.expected {
-				t.Errorf("rulesProduced(%d, %d) = %d, want %d", tt.numHostnames, tt.numPaths, got, tt.expected)
-			}
-		})
-	}
-}
-
-func TestCountPaths(t *testing.T) {
-	exact := gwapiv1.PathMatchExact
-	prefix := gwapiv1.PathMatchPathPrefix
-	regex := gwapiv1.PathMatchRegularExpression
-	fooPath := "/foo"
-	rootPath := "/"
-
-	tests := []struct {
-		name     string
-		matches  []gwapiv1.HTTPRouteMatch
-		expected int
-	}{
-		{"nil matches", nil, 0},
-		{"no path", []gwapiv1.HTTPRouteMatch{{}}, 0},
-		{"exact path", []gwapiv1.HTTPRouteMatch{{Path: &gwapiv1.HTTPPathMatch{Type: &exact, Value: &fooPath}}}, 1},
-		{"prefix non-root", []gwapiv1.HTTPRouteMatch{{Path: &gwapiv1.HTTPPathMatch{Type: &prefix, Value: &fooPath}}}, 1},
-		{"prefix root (omitted)", []gwapiv1.HTTPRouteMatch{{Path: &gwapiv1.HTTPPathMatch{Type: &prefix, Value: &rootPath}}}, 0},
-		{"regex path", []gwapiv1.HTTPRouteMatch{{Path: &gwapiv1.HTTPPathMatch{Type: &regex, Value: &fooPath}}}, 1},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := countPaths(tt.matches); got != tt.expected {
-				t.Errorf("countPaths() = %d, want %d", got, tt.expected)
-			}
-		})
 	}
 }

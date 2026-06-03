@@ -206,29 +206,40 @@ func (r *GatewayReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *
 		return KubeError(err)
 	}
 
-	// Build ingress rules
-	var ingress []cfclient.IngressRule
-	httpRules := cfclient.BuildIngressRules(httpRoutes)
-	httpRules, err = r.applyAccessPolicies(ctx, httpRules, gw, httpRoutes)
+	// Build ingress rules. HTTP and gRPC share Cloudflare's hostname+path match
+	// space and can shadow each other, so they are merged and sorted into Gateway
+	// API precedence order (most-specific first) as a single band; TLS then TCP
+	// follow, then the mandatory catch-all. Policy is attached by route identity,
+	// not rule position, so the sort is safe.
+	l7 := cfclient.BuildIngressRules(httpRoutes)
+	l7 = append(l7, cfclient.BuildGRPCIngressRules(grpcRoutes)...)
+	l7, err = r.applyAccessPolicies(ctx, l7, gw)
 	if err != nil {
 		return KubeError(err)
 	}
-	httpRules = applyOriginPoliciesHTTP(originPolicies, gw.Name, httpRules, httpRoutes)
-	ingress = append(ingress, httpRules...)
-	grpcRules := cfclient.BuildGRPCIngressRules(grpcRoutes)
-	grpcRules = applyOriginPoliciesGRPC(originPolicies, gw.Name, grpcRules, grpcRoutes)
-	ingress = append(ingress, grpcRules...)
+	applyOriginPolicies(originPolicies, gw.Name, l7)
+	cfclient.SortByPrecedence(l7)
+
 	tlsRules := cfclient.BuildTLSIngressRules(tlsRoutes)
 	tlsRules, err = r.applyBackendTLSPolicies(ctx, tlsRules, tlsRoutes)
 	if err != nil {
 		return KubeError(err)
 	}
-	tlsRules = applyOriginPoliciesTLS(originPolicies, gw.Name, tlsRules, tlsRoutes)
-	ingress = append(ingress, tlsRules...)
+	applyOriginPolicies(originPolicies, gw.Name, tlsRules)
+
 	tcpRules := cfclient.BuildTCPIngressRules(tcpRoutes)
-	tcpRules = applyOriginPoliciesTCP(originPolicies, gw.Name, tcpRules, tcpRoutes)
-	ingress = append(ingress, tcpRules...)
+	applyOriginPolicies(originPolicies, gw.Name, tcpRules)
+
+	ingress := make([]cfclient.IngressRule, 0, len(l7)+len(tlsRules)+len(tcpRules)+1)
+	ingress = append(ingress, cfclient.ToIngressRules(l7)...)
+	ingress = append(ingress, cfclient.ToIngressRules(tlsRules)...)
+	ingress = append(ingress, cfclient.ToIngressRules(tcpRules)...)
 	ingress = append(ingress, cfclient.IngressRule{Service: "http_status:404"})
+
+	// Routes carrying a match dimension Cloudflare can't enforce (method, header,
+	// or query-param matches) are served best-effort on hostname+path; record
+	// which routes that affected so their status can flag it.
+	unsupportedRoutes := collectUnsupportedMatchRoutes(l7)
 
 	// Push config
 	if err := r.CloudflareClient.UpdateTunnelConfiguration(ctx, tunnel.ID, ingress); err != nil {
@@ -252,7 +263,7 @@ func (r *GatewayReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *
 	// kinds (access, origin) directly target it.
 	for i := range httpRoutes {
 		key := targetKey("HTTPRoute", httpRoutes[i].Name)
-		if err := PatchHTTPRouteStatus(ctx, r.Client, &httpRoutes[i], gw.Name, gw.Namespace, true, accessAffected[key], originAffected[key]); err != nil {
+		if err := PatchHTTPRouteStatus(ctx, r.Client, &httpRoutes[i], gw.Name, gw.Namespace, true, accessAffected[key], originAffected[key], unsupportedRoutes[key]); err != nil {
 			logger.Error(err, "Failed to patch HTTPRoute status", "route", httpRoutes[i].Name)
 			if statusErr == nil {
 				statusErr = err
@@ -261,7 +272,7 @@ func (r *GatewayReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *
 	}
 	for i := range grpcRoutes {
 		key := targetKey("GRPCRoute", grpcRoutes[i].Name)
-		if err := PatchGRPCRouteStatus(ctx, r.Client, &grpcRoutes[i], gw.Name, gw.Namespace, true, accessAffected[key], originAffected[key]); err != nil {
+		if err := PatchGRPCRouteStatus(ctx, r.Client, &grpcRoutes[i], gw.Name, gw.Namespace, true, accessAffected[key], originAffected[key], unsupportedRoutes[key]); err != nil {
 			logger.Error(err, "Failed to patch GRPCRoute status", "route", grpcRoutes[i].Name)
 			if statusErr == nil {
 				statusErr = err
@@ -518,6 +529,19 @@ func (r *GatewayReconciler) collectTCPRoutes(ctx context.Context, gw *gwapiv1.Ga
 		attached = append(attached, route)
 	}
 	return attached, nil
+}
+
+// collectUnsupportedMatchRoutes returns the set of route identity keys
+// (kind/name) that produced at least one ingress rule whose source match used a
+// dimension Cloudflare cannot enforce (method, header, or query-param match).
+func collectUnsupportedMatchRoutes(rules []cfclient.BuiltRule) map[string]bool {
+	out := map[string]bool{}
+	for i := range rules {
+		if rules[i].UnsupportedMatch {
+			out[targetKey(rules[i].RouteKind, rules[i].RouteName)] = true
+		}
+	}
+	return out
 }
 
 func computeListenerCounts(gw *gwapiv1.Gateway, httpRoutes []gwapiv1.HTTPRoute, grpcRoutes []gwapiv1.GRPCRoute, tlsRoutes []gwapiv1alpha2.TLSRoute, tcpRoutes []gwapiv1alpha2.TCPRoute) []ListenerRouteCount {

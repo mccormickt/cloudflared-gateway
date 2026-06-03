@@ -13,63 +13,34 @@ import (
 )
 
 // applyAccessPolicies looks up CloudflareAccessPolicy resources that target
-// the given Gateway or HTTPRoutes (via GEP-713 Policy Attachment targetRefs),
-// and sets originRequest.access on matching ingress rules.
-func (r *GatewayReconciler) applyAccessPolicies(ctx context.Context, rules []cfclient.IngressRule, gw *gwapiv1.Gateway, httpRoutes []gwapiv1.HTTPRoute) ([]cfclient.IngressRule, error) {
-	logger := log.FromContext(ctx)
-
-	// List all CloudflareAccessPolicy resources in the Gateway's namespace
+// the given Gateway or its routes (via GEP-713 Policy Attachment targetRefs) and
+// sets originRequest.access on matching ingress rules by route identity. A
+// Gateway-level policy wins over route-level and applies to every rule (covering
+// all HTTP-family route kinds, including gRPC); otherwise each rule is matched to
+// a policy targeting its own route.
+func (r *GatewayReconciler) applyAccessPolicies(ctx context.Context, rules []cfclient.BuiltRule, gw *gwapiv1.Gateway) ([]cfclient.BuiltRule, error) {
 	var policyList cfv1alpha1.CloudflareAccessPolicyList
 	if err := r.Client.List(ctx, &policyList, client.InNamespace(gw.Namespace)); err != nil {
 		return nil, fmt.Errorf("listing CloudflareAccessPolicy resources: %w", err)
 	}
-
 	if len(policyList.Items) == 0 {
 		return rules, nil
 	}
 
-	// Check for a policy targeting the Gateway itself — applies to ALL ingress rules
 	gatewayAccessCfg := findAccessConfigForTarget(policyList.Items, gwapiv1.GroupName, "Gateway", gw.Name)
 
-	if gatewayAccessCfg != nil {
-		// Gateway-level policy: apply to all rules
-		for i := range rules {
-			if rules[i].OriginRequest == nil {
-				rules[i].OriginRequest = &cfclient.OriginRequest{}
-			}
-			rules[i].OriginRequest.Access = gatewayAccessCfg
+	for i := range rules {
+		cfg := gatewayAccessCfg
+		if cfg == nil {
+			cfg = findAccessConfigForTarget(policyList.Items, gwapiv1.GroupName, rules[i].RouteKind, rules[i].RouteName)
 		}
-		logger.V(1).Info("Applied Gateway-level CloudflareAccessPolicy",
-			"gateway", gw.Name, "teamName", gatewayAccessCfg.TeamName,
-			"rulesAffected", len(rules))
-
-		return rules, nil
-	}
-
-	// Check for policies targeting individual HTTPRoutes
-	idx := 0
-	for i := range httpRoutes {
-		route := &httpRoutes[i]
-		routeAccessCfg := findAccessConfigForTarget(policyList.Items, gwapiv1.GroupName, "HTTPRoute", route.Name)
-
-		for _, rule := range route.Spec.Rules {
-			paths := countPaths(rule.Matches)
-			ruleCount := rulesProduced(len(route.Spec.Hostnames), paths)
-
-			if routeAccessCfg != nil {
-				for j := 0; j < ruleCount && idx+j < len(rules); j++ {
-					if rules[idx+j].OriginRequest == nil {
-						rules[idx+j].OriginRequest = &cfclient.OriginRequest{}
-					}
-					rules[idx+j].OriginRequest.Access = routeAccessCfg
-				}
-				logger.V(1).Info("Applied route-level CloudflareAccessPolicy",
-					"route", route.Name, "teamName", routeAccessCfg.TeamName,
-					"rulesAffected", ruleCount)
-			}
-
-			idx += ruleCount
+		if cfg == nil {
+			continue
 		}
+		if rules[i].OriginRequest == nil {
+			rules[i].OriginRequest = &cfclient.OriginRequest{}
+		}
+		rules[i].OriginRequest.Access = cfg
 	}
 
 	return rules, nil
@@ -187,49 +158,4 @@ func findAccessConfigForTarget(policies []cfv1alpha1.CloudflareAccessPolicy, gro
 		TeamName: winner.Spec.TeamName,
 		AudTag:   winner.Spec.AudTag,
 	}
-}
-
-// countPaths returns the number of paths extracted from matches, mirroring
-// the logic in extractPaths from ingress.go.
-func countPaths(matches []gwapiv1.HTTPRouteMatch) int {
-	count := 0
-	for _, m := range matches {
-		if m.Path == nil {
-			continue
-		}
-		value := "/"
-		if m.Path.Value != nil {
-			value = *m.Path.Value
-		}
-		pathType := gwapiv1.PathMatchPathPrefix
-		if m.Path.Type != nil {
-			pathType = *m.Path.Type
-		}
-		switch pathType {
-		case gwapiv1.PathMatchExact:
-			count++
-		case gwapiv1.PathMatchPathPrefix:
-			if value != "/" {
-				count++
-			}
-		case gwapiv1.PathMatchRegularExpression:
-			count++
-		}
-	}
-	return count
-}
-
-// rulesProduced calculates how many ingress rules a single HTTPRoute rule
-// produces, matching the logic in BuildIngressRules.
-func rulesProduced(numHostnames, numPaths int) int {
-	if numHostnames == 0 {
-		if numPaths == 0 {
-			return 1
-		}
-		return numPaths
-	}
-	if numPaths == 0 {
-		return numHostnames
-	}
-	return numHostnames * numPaths
 }
