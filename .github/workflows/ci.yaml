@@ -46,7 +46,7 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Install kind
-        run: go install sigs.k8s.io/kind@latest
+        run: make install-kind
       - name: Run e2e tests
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
