@@ -46,6 +46,41 @@ func TestEvaluatePolicyAcceptance_OldestWinsConflict(t *testing.T) {
 	}
 }
 
+func TestSetGatewayPolicyAffected_PerKindConditions(t *testing.T) {
+	findCond := func(conds []metav1.Condition, typ string) *metav1.Condition {
+		for i := range conds {
+			if conds[i].Type == typ {
+				return &conds[i]
+			}
+		}
+		return nil
+	}
+	const (
+		accessType = "cloudflare.jan0ski.net/CloudflareAccessPolicyAffected"
+		originType = "cloudflare.jan0ski.net/CloudflareOriginPolicyAffected"
+	)
+
+	gw := &gwapiv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default", Generation: 3}}
+
+	// Access-affected only: both conditions present, named per-kind per GEP-713.
+	setGatewayPolicyAffected(gw, true, false)
+	if c := findCond(gw.Status.Conditions, accessType); c == nil || c.Status != metav1.ConditionTrue {
+		t.Errorf("expected %s=True, got %+v", accessType, c)
+	}
+	if c := findCond(gw.Status.Conditions, originType); c == nil || c.Status != metav1.ConditionFalse {
+		t.Errorf("expected %s=False, got %+v", originType, c)
+	}
+
+	// Flip to origin-affected only: access must be cleared to False, not left stale.
+	setGatewayPolicyAffected(gw, false, true)
+	if c := findCond(gw.Status.Conditions, accessType); c == nil || c.Status != metav1.ConditionFalse {
+		t.Errorf("expected %s cleared to False, got %+v", accessType, c)
+	}
+	if c := findCond(gw.Status.Conditions, originType); c == nil || c.Status != metav1.ConditionTrue {
+		t.Errorf("expected %s=True, got %+v", originType, c)
+	}
+}
+
 func TestEvaluatePolicyAcceptance_TargetNotFound(t *testing.T) {
 	p := originPolicyTargeting("p", time.Unix(1000, 0), "HTTPRoute", "absent")
 	all := []policyTarget{{obj: &p, refs: p.Spec.TargetRefs}}

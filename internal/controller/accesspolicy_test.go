@@ -226,6 +226,55 @@ func staleGatewayAncestor(gw *gwapiv1.Gateway) gwapiv1.PolicyStatus {
 	}
 }
 
+func TestPatchAccessPolicyStatuses_WritesAcceptedAncestor(t *testing.T) {
+	scheme := testScheme()
+	gw := makeGateway("test-gw", "default")
+	policy := makeAccessPolicy("gw-access", "default", "team", true, nil, "Gateway", "test-gw")
+
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(policy).
+		WithStatusSubresource(policy).
+		Build()
+	r := &GatewayReconciler{
+		Client:           c,
+		CloudflareClient: newMockClient(),
+		ControllerName:   gwapiv1.GatewayController(ControllerName),
+	}
+
+	valid := validPolicyTargets(gw, nil, nil, nil, nil)
+	affected, err := r.patchAccessPolicyStatuses(context.Background(), gw, valid)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !affected[targetKey("Gateway", "test-gw")] {
+		t.Error("expected Gateway to be reported as policy-affected")
+	}
+
+	var got cfv1alpha1.CloudflareAccessPolicy
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(policy), &got); err != nil {
+		t.Fatalf("get policy: %v", err)
+	}
+	if len(got.Status.Ancestors) != 1 {
+		t.Fatalf("expected 1 ancestor, got %d", len(got.Status.Ancestors))
+	}
+	anc := got.Status.Ancestors[0]
+	if string(anc.AncestorRef.Name) != "test-gw" {
+		t.Errorf("ancestorRef name: got %q, want test-gw", anc.AncestorRef.Name)
+	}
+	if anc.ControllerName != gwapiv1.GatewayController(ControllerName) {
+		t.Errorf("controllerName: got %q", anc.ControllerName)
+	}
+	var acceptedSet bool
+	for _, cond := range anc.Conditions {
+		if cond.Type == "Accepted" && cond.Status == metav1.ConditionTrue {
+			acceptedSet = true
+		}
+	}
+	if !acceptedSet {
+		t.Errorf("expected Accepted=True ancestor condition, got %+v", anc.Conditions)
+	}
+}
+
 func TestPatchAccessPolicyStatuses_PrunesStaleAncestor(t *testing.T) {
 	scheme := testScheme()
 	gw := makeGateway("test-gw", "default")

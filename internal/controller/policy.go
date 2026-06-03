@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"fmt"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gwapiv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
@@ -28,47 +30,55 @@ func validPolicyTargets(gw *gwapiv1.Gateway, http []gwapiv1.HTTPRoute, grpc []gw
 // maxPolicyAncestors caps the ancestors list per GEP-713.
 const maxPolicyAncestors = 16
 
-// policyAffectedConditionType is the condition set on objects (Gateways, routes)
-// that a CloudflareAccessPolicy or CloudflareOriginPolicy is acting on, per GEP-713.
-const policyAffectedConditionType = "cloudflare.jan0ski.net/PolicyAffected"
+// PolicyAffected condition types set on objects (Gateways, routes) that a policy
+// is acting on, for discoverability per GEP-713. The convention is one condition
+// type per metaresource kind, named "<Kind>Affected" and namespaced by the API
+// group, so observers can tell which policy kind affects the object.
+const (
+	accessPolicyAffectedConditionType = "cloudflare.jan0ski.net/CloudflareAccessPolicyAffected"
+	originPolicyAffectedConditionType = "cloudflare.jan0ski.net/CloudflareOriginPolicyAffected"
+)
 
-const policyAffectedMessage = "Object is affected by a CloudflareOriginPolicy or CloudflareAccessPolicy"
+// setGatewayPolicyAffected sets the per-kind PolicyAffected conditions on a
+// Gateway, reflecting whether an accepted policy of each kind currently targets
+// it. Both are set unconditionally each reconcile (True or False) so a condition
+// is cleared when the last targeting policy is removed; setCondition never
+// deletes, so a True-only update would leave it permanently stale. The caller
+// persists them via the subsequent Gateway status update.
+func setGatewayPolicyAffected(gw *gwapiv1.Gateway, accessAffected, originAffected bool) {
+	setGatewayPolicyAffectedCondition(gw, accessPolicyAffectedConditionType, "CloudflareAccessPolicy", accessAffected)
+	setGatewayPolicyAffectedCondition(gw, originPolicyAffectedConditionType, "CloudflareOriginPolicy", originAffected)
+}
 
-// setGatewayPolicyAffected sets the PolicyAffected condition on a Gateway,
-// reflecting whether any accepted policy currently targets it. It is set
-// unconditionally each reconcile (True or False) so the condition is cleared
-// when the last targeting policy is removed; setCondition never deletes, so a
-// True-only update would leave the condition permanently stale. The caller
-// persists it via the subsequent Gateway status update.
-func setGatewayPolicyAffected(gw *gwapiv1.Gateway, affected bool) {
+func setGatewayPolicyAffectedCondition(gw *gwapiv1.Gateway, condType, kind string, affected bool) {
 	status := metav1.ConditionTrue
 	reason := "PolicyAffected"
-	message := policyAffectedMessage
+	message := fmt.Sprintf("Object is affected by a %s", kind)
 	if !affected {
 		status = metav1.ConditionFalse
 		reason = "NoPolicyAttached"
-		message = "Object is not affected by any CloudflareOriginPolicy or CloudflareAccessPolicy"
+		message = fmt.Sprintf("Object is not affected by any %s", kind)
 	}
 	gw.Status.Conditions = setCondition(gw.Status.Conditions, metav1.Condition{
-		Type:               policyAffectedConditionType,
+		Type:               condType,
 		Status:             status,
 		ObservedGeneration: gw.Generation,
-		LastTransitionTime: transitionTime(gw.Status.Conditions, policyAffectedConditionType, status),
+		LastTransitionTime: transitionTime(gw.Status.Conditions, condType, status),
 		Reason:             reason,
 		Message:            message,
 	})
 }
 
-// policyAffectedRouteCondition builds the PolicyAffected condition for a route's
-// parent status, preserving the transition time when already set.
-func policyAffectedRouteCondition(generation int64, parents []gwapiv1.RouteParentStatus, gwName, gwNS string) metav1.Condition {
+// policyAffectedRouteCondition builds a per-kind PolicyAffected condition for a
+// route's parent status, preserving the transition time when already set.
+func policyAffectedRouteCondition(condType, kind string, generation int64, parents []gwapiv1.RouteParentStatus, gwName, gwNS string) metav1.Condition {
 	return metav1.Condition{
-		Type:               policyAffectedConditionType,
+		Type:               condType,
 		Status:             metav1.ConditionTrue,
 		ObservedGeneration: generation,
-		LastTransitionTime: routeCondTransitionTime(parents, gwName, gwNS, policyAffectedConditionType, metav1.ConditionTrue),
+		LastTransitionTime: routeCondTransitionTime(parents, gwName, gwNS, condType, metav1.ConditionTrue),
 		Reason:             "PolicyAffected",
-		Message:            policyAffectedMessage,
+		Message:            fmt.Sprintf("Object is affected by a %s", kind),
 	}
 }
 

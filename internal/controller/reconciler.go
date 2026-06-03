@@ -248,18 +248,13 @@ func (r *GatewayReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *
 		}
 	}
 	originAffected := r.patchOriginPolicyStatuses(ctx, originPolicies, gw, validTargets)
-	affected := map[string]bool{}
-	for k := range accessAffected {
-		affected[k] = true
-	}
-	for k := range originAffected {
-		affected[k] = true
-	}
 
-	// Set route statuses — best-effort all patches, return first error
+	// Set route statuses — best-effort all patches, return first error. Each
+	// route carries a per-kind PolicyAffected condition for whichever policy
+	// kinds (access, origin) directly target it.
 	for i := range httpRoutes {
-		pa := affected[targetKey("HTTPRoute", httpRoutes[i].Name)]
-		if err := PatchHTTPRouteStatus(ctx, r.Client, &httpRoutes[i], gw.Name, gw.Namespace, true, pa); err != nil {
+		key := targetKey("HTTPRoute", httpRoutes[i].Name)
+		if err := PatchHTTPRouteStatus(ctx, r.Client, &httpRoutes[i], gw.Name, gw.Namespace, true, accessAffected[key], originAffected[key]); err != nil {
 			logger.Error(err, "Failed to patch HTTPRoute status", "route", httpRoutes[i].Name)
 			if statusErr == nil {
 				statusErr = err
@@ -267,8 +262,8 @@ func (r *GatewayReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *
 		}
 	}
 	for i := range grpcRoutes {
-		pa := affected[targetKey("GRPCRoute", grpcRoutes[i].Name)]
-		if err := PatchGRPCRouteStatus(ctx, r.Client, &grpcRoutes[i], gw.Name, gw.Namespace, true, pa); err != nil {
+		key := targetKey("GRPCRoute", grpcRoutes[i].Name)
+		if err := PatchGRPCRouteStatus(ctx, r.Client, &grpcRoutes[i], gw.Name, gw.Namespace, true, accessAffected[key], originAffected[key]); err != nil {
 			logger.Error(err, "Failed to patch GRPCRoute status", "route", grpcRoutes[i].Name)
 			if statusErr == nil {
 				statusErr = err
@@ -276,8 +271,8 @@ func (r *GatewayReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *
 		}
 	}
 	for i := range tlsRoutes {
-		pa := affected[targetKey("TLSRoute", tlsRoutes[i].Name)]
-		if err := PatchTLSRouteStatus(ctx, r.Client, &tlsRoutes[i], gw.Name, gw.Namespace, true, pa); err != nil {
+		key := targetKey("TLSRoute", tlsRoutes[i].Name)
+		if err := PatchTLSRouteStatus(ctx, r.Client, &tlsRoutes[i], gw.Name, gw.Namespace, true, accessAffected[key], originAffected[key]); err != nil {
 			logger.Error(err, "Failed to patch TLSRoute status", "route", tlsRoutes[i].Name)
 			if statusErr == nil {
 				statusErr = err
@@ -285,8 +280,8 @@ func (r *GatewayReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *
 		}
 	}
 	for i := range tcpRoutes {
-		pa := affected[targetKey("TCPRoute", tcpRoutes[i].Name)]
-		if err := PatchTCPRouteStatus(ctx, r.Client, &tcpRoutes[i], gw.Name, gw.Namespace, true, pa); err != nil {
+		key := targetKey("TCPRoute", tcpRoutes[i].Name)
+		if err := PatchTCPRouteStatus(ctx, r.Client, &tcpRoutes[i], gw.Name, gw.Namespace, true, accessAffected[key], originAffected[key]); err != nil {
 			logger.Error(err, "Failed to patch TCPRoute status", "route", tcpRoutes[i].Name)
 			if statusErr == nil {
 				statusErr = err
@@ -294,8 +289,9 @@ func (r *GatewayReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *
 		}
 	}
 
-	// Reflect policy-affected state on the Gateway before its status is written.
-	setGatewayPolicyAffected(gw, affected[targetKey("Gateway", gw.Name)])
+	// Reflect per-kind policy-affected state on the Gateway before its status is written.
+	gwKey := targetKey("Gateway", gw.Name)
+	setGatewayPolicyAffected(gw, accessAffected[gwKey], originAffected[gwKey])
 
 	// Compute listener route counts and set Gateway status
 	listenerCounts := computeListenerCounts(gw, httpRoutes, grpcRoutes, tlsRoutes, tcpRoutes)

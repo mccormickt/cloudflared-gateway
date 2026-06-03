@@ -578,7 +578,8 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 			return false
 		}, 10*time.Second, 100*time.Millisecond, "origin policy should report Accepted ancestor status")
 
-		// The targeted route should get the PolicyAffected condition.
+		// The targeted route should get the per-kind PolicyAffected condition
+		// for the CloudflareOriginPolicy acting on it.
 		requireEventually(t, func() bool {
 			var rt gwapiv1.HTTPRoute
 			if err := k8sClient.Get(ctx, types.NamespacedName{Name: route.Name, Namespace: route.Namespace}, &rt); err != nil {
@@ -586,13 +587,13 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 			}
 			for _, p := range rt.Status.Parents {
 				for _, c := range p.Conditions {
-					if c.Type == "cloudflare.jan0ski.net/PolicyAffected" && c.Status == metav1.ConditionTrue {
+					if c.Type == "cloudflare.jan0ski.net/CloudflareOriginPolicyAffected" && c.Status == metav1.ConditionTrue {
 						return true
 					}
 				}
 			}
 			return false
-		}, 10*time.Second, 100*time.Millisecond, "targeted route should report PolicyAffected")
+		}, 10*time.Second, 100*time.Millisecond, "targeted route should report CloudflareOriginPolicyAffected")
 	})
 
 	t.Run("Cleanup", func(t *testing.T) {

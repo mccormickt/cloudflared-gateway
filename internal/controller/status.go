@@ -93,7 +93,7 @@ func PatchGatewayStatus(ctx context.Context, c client.Client, gw *gwapiv1.Gatewa
 }
 
 // PatchHTTPRouteStatus sets the Accepted condition for a specific parentRef on an HTTPRoute.
-func PatchHTTPRouteStatus(ctx context.Context, c client.Client, route *gwapiv1.HTTPRoute, gwName, gwNS string, accepted, policyAffected bool) error {
+func PatchHTTPRouteStatus(ctx context.Context, c client.Client, route *gwapiv1.HTTPRoute, gwName, gwNS string, accepted, accessAffected, originAffected bool) error {
 	status := metav1.ConditionTrue
 	reason := string(gwapiv1.RouteReasonAccepted)
 	message := "Route is accepted"
@@ -125,15 +125,18 @@ func PatchHTTPRouteStatus(ctx context.Context, c client.Client, route *gwapiv1.H
 		}},
 	}
 
-	if policyAffected {
-		parentStatus.Conditions = append(parentStatus.Conditions, policyAffectedRouteCondition(route.Generation, route.Status.Parents, gwName, gwNS))
+	if accessAffected {
+		parentStatus.Conditions = append(parentStatus.Conditions, policyAffectedRouteCondition(accessPolicyAffectedConditionType, "CloudflareAccessPolicy", route.Generation, route.Status.Parents, gwName, gwNS))
+	}
+	if originAffected {
+		parentStatus.Conditions = append(parentStatus.Conditions, policyAffectedRouteCondition(originPolicyAffectedConditionType, "CloudflareOriginPolicy", route.Generation, route.Status.Parents, gwName, gwNS))
 	}
 	route.Status.Parents = setParentStatus(route.Status.Parents, parentStatus, gwName, gwNS)
 	return c.Status().Update(ctx, route)
 }
 
 // PatchTLSRouteStatus sets the Accepted condition for a specific parentRef on a TLSRoute.
-func PatchTLSRouteStatus(ctx context.Context, c client.Client, route *gwapiv1alpha2.TLSRoute, gwName, gwNS string, accepted, policyAffected bool) error {
+func PatchTLSRouteStatus(ctx context.Context, c client.Client, route *gwapiv1alpha2.TLSRoute, gwName, gwNS string, accepted, accessAffected, originAffected bool) error {
 	status := metav1.ConditionTrue
 	reason := string(gwapiv1.RouteReasonAccepted)
 	message := "Route is accepted"
@@ -165,15 +168,18 @@ func PatchTLSRouteStatus(ctx context.Context, c client.Client, route *gwapiv1alp
 		}},
 	}
 
-	if policyAffected {
-		parentStatus.Conditions = append(parentStatus.Conditions, policyAffectedRouteCondition(route.Generation, route.Status.Parents, gwName, gwNS))
+	if accessAffected {
+		parentStatus.Conditions = append(parentStatus.Conditions, policyAffectedRouteCondition(accessPolicyAffectedConditionType, "CloudflareAccessPolicy", route.Generation, route.Status.Parents, gwName, gwNS))
+	}
+	if originAffected {
+		parentStatus.Conditions = append(parentStatus.Conditions, policyAffectedRouteCondition(originPolicyAffectedConditionType, "CloudflareOriginPolicy", route.Generation, route.Status.Parents, gwName, gwNS))
 	}
 	route.Status.Parents = setParentStatus(route.Status.Parents, parentStatus, gwName, gwNS)
 	return c.Status().Update(ctx, route)
 }
 
 // PatchTCPRouteStatus sets the Accepted condition for a specific parentRef on a TCPRoute.
-func PatchTCPRouteStatus(ctx context.Context, c client.Client, route *gwapiv1alpha2.TCPRoute, gwName, gwNS string, accepted, policyAffected bool) error {
+func PatchTCPRouteStatus(ctx context.Context, c client.Client, route *gwapiv1alpha2.TCPRoute, gwName, gwNS string, accepted, accessAffected, originAffected bool) error {
 	status := metav1.ConditionTrue
 	reason := string(gwapiv1.RouteReasonAccepted)
 	message := "Route is accepted"
@@ -205,15 +211,18 @@ func PatchTCPRouteStatus(ctx context.Context, c client.Client, route *gwapiv1alp
 		}},
 	}
 
-	if policyAffected {
-		parentStatus.Conditions = append(parentStatus.Conditions, policyAffectedRouteCondition(route.Generation, route.Status.Parents, gwName, gwNS))
+	if accessAffected {
+		parentStatus.Conditions = append(parentStatus.Conditions, policyAffectedRouteCondition(accessPolicyAffectedConditionType, "CloudflareAccessPolicy", route.Generation, route.Status.Parents, gwName, gwNS))
+	}
+	if originAffected {
+		parentStatus.Conditions = append(parentStatus.Conditions, policyAffectedRouteCondition(originPolicyAffectedConditionType, "CloudflareOriginPolicy", route.Generation, route.Status.Parents, gwName, gwNS))
 	}
 	route.Status.Parents = setParentStatus(route.Status.Parents, parentStatus, gwName, gwNS)
 	return c.Status().Update(ctx, route)
 }
 
 // PatchGRPCRouteStatus sets the Accepted condition for a specific parentRef on a GRPCRoute.
-func PatchGRPCRouteStatus(ctx context.Context, c client.Client, route *gwapiv1.GRPCRoute, gwName, gwNS string, accepted, policyAffected bool) error {
+func PatchGRPCRouteStatus(ctx context.Context, c client.Client, route *gwapiv1.GRPCRoute, gwName, gwNS string, accepted, accessAffected, originAffected bool) error {
 	status := metav1.ConditionTrue
 	reason := string(gwapiv1.RouteReasonAccepted)
 	message := "Route is accepted"
@@ -245,8 +254,11 @@ func PatchGRPCRouteStatus(ctx context.Context, c client.Client, route *gwapiv1.G
 		}},
 	}
 
-	if policyAffected {
-		parentStatus.Conditions = append(parentStatus.Conditions, policyAffectedRouteCondition(route.Generation, route.Status.Parents, gwName, gwNS))
+	if accessAffected {
+		parentStatus.Conditions = append(parentStatus.Conditions, policyAffectedRouteCondition(accessPolicyAffectedConditionType, "CloudflareAccessPolicy", route.Generation, route.Status.Parents, gwName, gwNS))
+	}
+	if originAffected {
+		parentStatus.Conditions = append(parentStatus.Conditions, policyAffectedRouteCondition(originPolicyAffectedConditionType, "CloudflareOriginPolicy", route.Generation, route.Status.Parents, gwName, gwNS))
 	}
 	route.Status.Parents = setParentStatus(route.Status.Parents, parentStatus, gwName, gwNS)
 	return c.Status().Update(ctx, route)
