@@ -16,6 +16,10 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 	scheme.AddKnownTypes(GroupVersion,
 		&CloudflareAccessPolicy{},
 		&CloudflareAccessPolicyList{},
+		&CloudflareOriginPolicy{},
+		&CloudflareOriginPolicyList{},
+		&CloudflareTunnelConfig{},
+		&CloudflareTunnelConfigList{},
 	)
 	metav1.AddToGroupVersion(scheme, GroupVersion)
 	return nil

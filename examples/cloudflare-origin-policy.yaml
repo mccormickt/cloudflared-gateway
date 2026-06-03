@@ -1,0 +1,35 @@
+# CloudflareOriginPolicy is an Inherited Policy (GEP-713) that tunes the
+# originRequest settings cloudflared uses to reach your backends. It replaces the
+# former tunnels.cloudflare.com/* route annotations.
+#
+# A policy targeting a Gateway is the default for every attached route:
+apiVersion: cloudflare.jan0ski.net/v1alpha1
+kind: CloudflareOriginPolicy
+metadata:
+  name: gateway-origin-defaults
+  namespace: default
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: cloudflare-tunnel
+  disableChunkedEncoding: true
+  keepAliveConnections: 10
+  keepAliveTimeout: 30s
+  noHappyEyeballs: false
+---
+# A policy targeting a route overrides the Gateway-level default for that route:
+apiVersion: cloudflare.jan0ski.net/v1alpha1
+kind: CloudflareOriginPolicy
+metadata:
+  name: route-origin-override
+  namespace: default
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: web
+  proxyType: socks
+  tlsTimeout: 10s
+  tcpKeepAlive: 30s
+  http2Origin: true

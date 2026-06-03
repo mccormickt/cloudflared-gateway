@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	cf "github.com/cloudflare/cloudflare-go/v7"
 	"github.com/cloudflare/cloudflare-go/v7/option"
@@ -134,10 +135,31 @@ func toV7Ingress(rules []IngressRule) []zero_trust.TunnelCloudflaredConfiguratio
 	return out
 }
 
+// durationSeconds converts a duration to whole seconds for the v7 API, which
+// only accepts integer seconds. A positive sub-second duration floors to 1s
+// rather than 0 so a user-specified timeout is never silently dropped to "no
+// timeout".
+func durationSeconds(d time.Duration) int64 {
+	s := int64(d.Seconds())
+	if s == 0 && d > 0 {
+		s = 1
+	}
+	return s
+}
+
 func toV7OriginRequest(o *OriginRequest) zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngressOriginRequest {
 	var r zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngressOriginRequest
 	if o.ConnectTimeout != nil {
-		r.ConnectTimeout = cf.F(int64(o.ConnectTimeout.Seconds()))
+		r.ConnectTimeout = cf.F(durationSeconds(*o.ConnectTimeout))
+	}
+	if o.TLSTimeout != nil {
+		r.TLSTimeout = cf.F(durationSeconds(*o.TLSTimeout))
+	}
+	if o.TCPKeepAlive != nil {
+		r.TCPKeepAlive = cf.F(durationSeconds(*o.TCPKeepAlive))
+	}
+	if o.MatchSNIToHost != nil {
+		r.MatchSnItoHost = cf.F(*o.MatchSNIToHost)
 	}
 	if o.NoHappyEyeballs != nil {
 		r.NoHappyEyeballs = cf.F(*o.NoHappyEyeballs)
@@ -146,7 +168,7 @@ func toV7OriginRequest(o *OriginRequest) zero_trust.TunnelCloudflaredConfigurati
 		r.KeepAliveConnections = cf.F(int64(*o.KeepAliveConnections))
 	}
 	if o.KeepAliveTimeout != nil {
-		r.KeepAliveTimeout = cf.F(int64(o.KeepAliveTimeout.Seconds()))
+		r.KeepAliveTimeout = cf.F(durationSeconds(*o.KeepAliveTimeout))
 	}
 	if o.HTTPHostHeader != nil {
 		r.HTTPHostHeader = cf.F(*o.HTTPHostHeader)

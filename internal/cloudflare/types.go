@@ -28,6 +28,8 @@ type AccessConfig struct {
 // representable in the API).
 type OriginRequest struct {
 	ConnectTimeout         *time.Duration
+	TLSTimeout             *time.Duration
+	TCPKeepAlive           *time.Duration
 	NoHappyEyeballs        *bool
 	KeepAliveConnections   *int
 	KeepAliveTimeout       *time.Duration
@@ -37,6 +39,7 @@ type OriginRequest struct {
 	DisableChunkedEncoding *bool
 	ProxyType              *string
 	HTTP2Origin            *bool
+	MatchSNIToHost         *bool
 	Access                 *AccessConfig
 }
 

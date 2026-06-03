@@ -532,6 +532,70 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 		}
 	})
 
+	t.Run("OriginPolicyStatus", func(t *testing.T) {
+		gw := makeGateway("integ-gw-origin", "default", gc.Name)
+		if err := k8sClient.Create(ctx, gw); err != nil {
+			t.Fatalf("failed to create Gateway: %v", err)
+		}
+		t.Cleanup(func() { k8sClient.Delete(ctx, gw) })
+
+		route := makeHTTPRoute("integ-route-origin", "default", gw.Name)
+		if err := k8sClient.Create(ctx, route); err != nil {
+			t.Fatalf("failed to create HTTPRoute: %v", err)
+		}
+		t.Cleanup(func() { k8sClient.Delete(ctx, route) })
+
+		proxyType := "socks"
+		policy := &cfv1alpha1.CloudflareOriginPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "integ-origin-pol", Namespace: "default"},
+			Spec: cfv1alpha1.CloudflareOriginPolicySpec{
+				TargetRefs: []gwapiv1.LocalPolicyTargetReference{{
+					Group: gwapiv1.GroupName,
+					Kind:  "HTTPRoute",
+					Name:  gwapiv1.ObjectName(route.Name),
+				}},
+				ProxyType: &proxyType,
+			},
+		}
+		if err := k8sClient.Create(ctx, policy); err != nil {
+			t.Fatalf("failed to create CloudflareOriginPolicy: %v", err)
+		}
+		t.Cleanup(func() { k8sClient.Delete(ctx, policy) })
+
+		// Policy should get an ancestor Accepted=True condition.
+		requireEventually(t, func() bool {
+			var p cfv1alpha1.CloudflareOriginPolicy
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: policy.Name, Namespace: policy.Namespace}, &p); err != nil {
+				return false
+			}
+			for _, a := range p.Status.Ancestors {
+				for _, c := range a.Conditions {
+					if c.Type == "Accepted" && c.Status == metav1.ConditionTrue {
+						return true
+					}
+				}
+			}
+			return false
+		}, 10*time.Second, 100*time.Millisecond, "origin policy should report Accepted ancestor status")
+
+		// The targeted route should get the per-kind PolicyAffected condition
+		// for the CloudflareOriginPolicy acting on it.
+		requireEventually(t, func() bool {
+			var rt gwapiv1.HTTPRoute
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: route.Name, Namespace: route.Namespace}, &rt); err != nil {
+				return false
+			}
+			for _, p := range rt.Status.Parents {
+				for _, c := range p.Conditions {
+					if c.Type == "cloudflare.jan0ski.net/CloudflareOriginPolicyAffected" && c.Status == metav1.ConditionTrue {
+						return true
+					}
+				}
+			}
+			return false
+		}, 10*time.Second, 100*time.Millisecond, "targeted route should report CloudflareOriginPolicyAffected")
+	})
+
 	t.Run("Cleanup", func(t *testing.T) {
 		// Reset mock calls for this subtest
 		mock.mu.Lock()

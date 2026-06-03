@@ -1,0 +1,57 @@
+# CloudflareTunnelConfig customizes the cloudflared Deployment a Gateway runs.
+# It is referenced (not attached) via parametersRef. Unset fields fall through to
+# built-in defaults; the pod security context is always fixed by the controller.
+apiVersion: cloudflare.jan0ski.net/v1alpha1
+kind: CloudflareTunnelConfig
+metadata:
+  name: cloudflared-config
+  namespace: default
+spec:
+  replicas: 3
+  image: cloudflare/cloudflared:2024.12.2
+  logLevel: info
+  metricsPort: 2000
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  podLabels:
+    team: platform
+  nodeSelector:
+    kubernetes.io/os: linux
+---
+# Attach it cluster-wide as the default for a GatewayClass (the ref must carry a
+# namespace, since GatewayClass is cluster-scoped):
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: cloudflare-tunnel
+spec:
+  controllerName: jan0ski.net/cloudflared-gateway
+  parametersRef:
+    group: cloudflare.jan0ski.net
+    kind: CloudflareTunnelConfig
+    name: cloudflared-config
+    namespace: default
+---
+# ...or per-Gateway via spec.infrastructure.parametersRef, which overrides the
+# GatewayClass-level default for that Gateway:
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: cloudflare-tunnel
+  namespace: default
+spec:
+  gatewayClassName: cloudflare-tunnel
+  infrastructure:
+    parametersRef:
+      group: cloudflare.jan0ski.net
+      kind: CloudflareTunnelConfig
+      name: cloudflared-config
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80

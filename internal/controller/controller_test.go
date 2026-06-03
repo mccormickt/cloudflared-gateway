@@ -805,7 +805,7 @@ func TestBuildDeployment_InfrastructureLabels(t *testing.T) {
 		},
 	}
 
-	deploy := BuildCloudflaredDeployment(gw, "test-secret")
+	deploy := BuildCloudflaredDeployment(gw, "test-secret", nil)
 
 	// Check deployment-level labels
 	if deploy.Labels["team"] != "platform" {
@@ -848,7 +848,7 @@ func TestBuildDeployment_NoInfrastructure(t *testing.T) {
 	gw := makeGateway("test-gw", "default")
 	// No Infrastructure set (nil)
 
-	deploy := BuildCloudflaredDeployment(gw, "test-secret")
+	deploy := BuildCloudflaredDeployment(gw, "test-secret", nil)
 
 	// Original labels should be present and unchanged
 	if deploy.Labels["app"] != "cloudflared-test-gw" {
@@ -882,7 +882,7 @@ func TestBuildDeployment_InfrastructureLabelsOnly(t *testing.T) {
 		// No annotations
 	}
 
-	deploy := BuildCloudflaredDeployment(gw, "test-secret")
+	deploy := BuildCloudflaredDeployment(gw, "test-secret", nil)
 
 	if deploy.Labels["team"] != "platform" {
 		t.Errorf("deployment label 'team': got %q, want %q", deploy.Labels["team"], "platform")
@@ -1022,63 +1022,115 @@ func TestBuildDeployment_InfrastructureLabelCollision(t *testing.T) {
 		},
 	}
 
-	deploy := BuildCloudflaredDeployment(gw, "test-secret")
+	deploy := BuildCloudflaredDeployment(gw, "test-secret", nil)
 
-	// Document the behavior: infrastructure labels override the built-in 'app' label.
-	// This is the current behavior — the 'app' label in the deployment map gets
-	// overwritten by the infrastructure label. The selector still uses the original
-	// value since it was set from the same map reference before the override.
-	//
-	// Note: In practice, overriding 'app' will cause a selector mismatch since
-	// the selector was built from the original labels map (which is now modified).
-	// This documents the existing behavior — callers should avoid setting 'app'
-	// in infrastructure labels.
+	// Infrastructure labels are layered onto the object/template labels, so the
+	// 'app' label there reflects the override.
 	if deploy.Labels["app"] != "override" {
-		t.Errorf("infrastructure 'app' label should override built-in, got %q", deploy.Labels["app"])
+		t.Errorf("infrastructure 'app' label should override built-in object label, got %q", deploy.Labels["app"])
+	}
+
+	// The selector is immutable on a Deployment, so it must never be affected by
+	// infrastructure labels — it always keeps the built-in identity label.
+	wantSelector := DeploymentName(gw.Name)
+	if got := deploy.Spec.Selector.MatchLabels["app"]; got != wantSelector {
+		t.Errorf("selector 'app' label must stay %q, got %q", wantSelector, got)
+	}
+}
+
+func TestBuildDeployment_PodLabelsDoNotPolluteSelector(t *testing.T) {
+	gw := makeGateway("test-gw", "default")
+	cfg := &cfv1alpha1.CloudflareTunnelConfigSpec{
+		PodLabels: map[string]string{"team": "alpha", "app": "should-not-leak"},
+	}
+
+	deploy := BuildCloudflaredDeployment(gw, "test-secret", cfg)
+
+	// PodLabels apply to the pod template.
+	if deploy.Spec.Template.Labels["team"] != "alpha" {
+		t.Errorf("expected pod template to carry podLabel team=alpha, got %q", deploy.Spec.Template.Labels["team"])
+	}
+
+	// The immutable selector must not pick up any pod labels — otherwise a later
+	// change to PodLabels makes the Deployment update fail (selector is immutable).
+	wantSelector := DeploymentName(gw.Name)
+	if got := deploy.Spec.Selector.MatchLabels["app"]; got != wantSelector {
+		t.Errorf("selector 'app' must stay %q, got %q", wantSelector, got)
+	}
+	if _, leaked := deploy.Spec.Selector.MatchLabels["team"]; leaked {
+		t.Errorf("podLabel 'team' must not leak into the immutable selector: %v", deploy.Spec.Selector.MatchLabels)
 	}
 }
 
 // ---------------------------------------------------------------------------
-// T18: Annotation application tests
+// T18: CloudflareOriginPolicy application tests
 // ---------------------------------------------------------------------------
 
-func TestApplyHTTPRouteAnnotations_OnlyAnnotatedRoute(t *testing.T) {
-	port := gwapiv1.PortNumber(80)
-	route1 := gwapiv1.HTTPRoute{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "route-no-anno",
-			Namespace: "default",
-		},
-		Spec: gwapiv1.HTTPRouteSpec{
-			Hostnames: []gwapiv1.Hostname{"a.example.com"},
-			Rules: []gwapiv1.HTTPRouteRule{{
-				BackendRefs: []gwapiv1.HTTPBackendRef{{
-					BackendRef: gwapiv1.BackendRef{
-						BackendObjectReference: gwapiv1.BackendObjectReference{
-							Name: "svc-a",
-							Port: &port,
-						},
-					},
-				}},
-			}},
-		},
-	}
+func ptr[T any](v T) *T { return &v }
 
-	route2 := gwapiv1.HTTPRoute{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "route-with-anno",
-			Namespace: "default",
-			Annotations: map[string]string{
-				"tunnels.cloudflare.com/proxy-type": "socks",
+func makeOriginPolicy(name, namespace, targetKind, targetName string, spec cfv1alpha1.CloudflareOriginPolicySpec) cfv1alpha1.CloudflareOriginPolicy {
+	spec.TargetRefs = []gwapiv1.LocalPolicyTargetReference{{
+		Group: gwapiv1.GroupName,
+		Kind:  gwapiv1.Kind(targetKind),
+		Name:  gwapiv1.ObjectName(targetName),
+	}}
+	return cfv1alpha1.CloudflareOriginPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+		Spec:       spec,
+	}
+}
+
+func TestFindAccessConfigForTarget_OldestWins(t *testing.T) {
+	mkPolicy := func(name, team string, createdUnix int64) cfv1alpha1.CloudflareAccessPolicy {
+		return cfv1alpha1.CloudflareAccessPolicy{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              name,
+				Namespace:         "default",
+				CreationTimestamp: metav1.Unix(createdUnix, 0),
 			},
-		},
+			Spec: cfv1alpha1.CloudflareAccessPolicySpec{
+				TargetRefs: []gwapiv1.LocalPolicyTargetReference{{
+					Group: gwapiv1.GroupName,
+					Kind:  "Gateway",
+					Name:  "gw",
+				}},
+				TeamName: team,
+			},
+		}
+	}
+
+	// 'zzz' is the older policy and must win, even though 'aaa' sorts first and
+	// would be returned by a naive first-match (client List order is not
+	// creationTimestamp-ordered). This must agree with the Conflicted/Accepted
+	// status decided by evaluatePolicyAcceptance/policyOlderThan.
+	older := mkPolicy("zzz", "good-team", 100)
+	newer := mkPolicy("aaa", "evil-team", 200)
+
+	for _, order := range [][]cfv1alpha1.CloudflareAccessPolicy{
+		{newer, older},
+		{older, newer},
+	} {
+		cfg := findAccessConfigForTarget(order, gwapiv1.GroupName, "Gateway", "gw")
+		if cfg == nil {
+			t.Fatalf("expected a matching access config, got nil")
+		}
+		if cfg.TeamName != "good-team" {
+			t.Errorf("oldest policy should win: want team good-team, got %q (order %v)", cfg.TeamName, order)
+		}
+	}
+}
+
+func httpRouteWithBackend(name string, hostnames ...gwapiv1.Hostname) gwapiv1.HTTPRoute {
+	port := gwapiv1.PortNumber(80)
+	return gwapiv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
 		Spec: gwapiv1.HTTPRouteSpec{
-			Hostnames: []gwapiv1.Hostname{"b.example.com"},
+			Hostnames: hostnames,
 			Rules: []gwapiv1.HTTPRouteRule{{
 				BackendRefs: []gwapiv1.HTTPBackendRef{{
 					BackendRef: gwapiv1.BackendRef{
 						BackendObjectReference: gwapiv1.BackendObjectReference{
-							Name: "svc-b",
+							Name: gwapiv1.ObjectName("svc-" + name),
 							Port: &port,
 						},
 					},
@@ -1086,71 +1138,79 @@ func TestApplyHTTPRouteAnnotations_OnlyAnnotatedRoute(t *testing.T) {
 			}},
 		},
 	}
+}
 
-	routes := []gwapiv1.HTTPRoute{route1, route2}
+func TestApplyOriginPolicies_OnlyTargetedRoute(t *testing.T) {
+	routes := []gwapiv1.HTTPRoute{
+		httpRouteWithBackend("route-untargeted", "a.example.com"),
+		httpRouteWithBackend("route-targeted", "b.example.com"),
+	}
 	rules := cfclient.BuildIngressRules(routes)
-
 	if len(rules) != 2 {
 		t.Fatalf("expected 2 rules, got %d", len(rules))
 	}
 
-	rules = applyHTTPRouteAnnotations(rules, routes)
+	policies := []cfv1alpha1.CloudflareOriginPolicy{
+		makeOriginPolicy("p", "default", "HTTPRoute", "route-targeted",
+			cfv1alpha1.CloudflareOriginPolicySpec{ProxyType: ptr("socks")}),
+	}
+	rules = applyOriginPoliciesHTTP(policies, "gw", rules, routes)
 
-	// First route (no annotations) should have no originRequest
 	if rules[0].OriginRequest != nil {
-		t.Errorf("route without annotations should have nil originRequest, got %+v", rules[0].OriginRequest)
+		t.Errorf("untargeted route should have nil originRequest, got %+v", rules[0].OriginRequest)
 	}
-
-	// Second route (has annotations) should have proxy-type set
-	if rules[1].OriginRequest == nil {
-		t.Fatal("expected originRequest on annotated route")
-	}
-	if rules[1].OriginRequest.ProxyType == nil || *rules[1].OriginRequest.ProxyType != "socks" {
-		t.Errorf("expected proxyType 'socks', got %v", rules[1].OriginRequest.ProxyType)
+	if rules[1].OriginRequest == nil || rules[1].OriginRequest.ProxyType == nil || *rules[1].OriginRequest.ProxyType != "socks" {
+		t.Errorf("expected proxyType 'socks' on targeted route, got %+v", rules[1].OriginRequest)
 	}
 }
 
-func TestApplyHTTPRouteAnnotations_MultiHostname(t *testing.T) {
-	port := gwapiv1.PortNumber(80)
-	route := gwapiv1.HTTPRoute{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "multi-host",
-			Namespace: "default",
-			Annotations: map[string]string{
-				"tunnels.cloudflare.com/disable-chunked-encoding": "true",
-			},
-		},
-		Spec: gwapiv1.HTTPRouteSpec{
-			Hostnames: []gwapiv1.Hostname{"a.example.com", "b.example.com"},
-			Rules: []gwapiv1.HTTPRouteRule{{
-				BackendRefs: []gwapiv1.HTTPBackendRef{{
-					BackendRef: gwapiv1.BackendRef{
-						BackendObjectReference: gwapiv1.BackendObjectReference{
-							Name: "svc",
-							Port: &port,
-						},
-					},
-				}},
-			}},
-		},
-	}
-
-	routes := []gwapiv1.HTTPRoute{route}
+func TestApplyOriginPolicies_MultiHostname(t *testing.T) {
+	routes := []gwapiv1.HTTPRoute{httpRouteWithBackend("multi-host", "a.example.com", "b.example.com")}
 	rules := cfclient.BuildIngressRules(routes)
-
 	if len(rules) != 2 {
 		t.Fatalf("expected 2 rules (one per hostname), got %d", len(rules))
 	}
 
-	rules = applyHTTPRouteAnnotations(rules, routes)
+	policies := []cfv1alpha1.CloudflareOriginPolicy{
+		makeOriginPolicy("p", "default", "HTTPRoute", "multi-host",
+			cfv1alpha1.CloudflareOriginPolicySpec{DisableChunkedEncoding: ptr(true)}),
+	}
+	rules = applyOriginPoliciesHTTP(policies, "gw", rules, routes)
 
-	// Both rules should have disable-chunked-encoding set
 	for i, rule := range rules {
-		if rule.OriginRequest == nil {
-			t.Fatalf("rule %d: expected originRequest", i)
+		if rule.OriginRequest == nil || rule.OriginRequest.DisableChunkedEncoding == nil || !*rule.OriginRequest.DisableChunkedEncoding {
+			t.Errorf("rule %d: expected disableChunkedEncoding=true, got %+v", i, rule.OriginRequest)
 		}
-		if rule.OriginRequest.DisableChunkedEncoding == nil || !*rule.OriginRequest.DisableChunkedEncoding {
-			t.Errorf("rule %d: expected disableChunkedEncoding=true", i)
-		}
+	}
+}
+
+// Inherited precedence: a Gateway-level policy is the default; a route-level
+// policy overrides it for that route.
+func TestApplyOriginPolicies_InheritedPrecedence(t *testing.T) {
+	routes := []gwapiv1.HTTPRoute{httpRouteWithBackend("route", "a.example.com")}
+	rules := cfclient.BuildIngressRules(routes)
+
+	policies := []cfv1alpha1.CloudflareOriginPolicy{
+		makeOriginPolicy("gw-default", "default", "Gateway", "gw",
+			cfv1alpha1.CloudflareOriginPolicySpec{
+				NoHappyEyeballs:        ptr(true),
+				DisableChunkedEncoding: ptr(true),
+			}),
+		makeOriginPolicy("route-override", "default", "HTTPRoute", "route",
+			cfv1alpha1.CloudflareOriginPolicySpec{NoHappyEyeballs: ptr(false)}),
+	}
+	rules = applyOriginPoliciesHTTP(policies, "gw", rules, routes)
+
+	or := rules[0].OriginRequest
+	if or == nil {
+		t.Fatal("expected originRequest")
+	}
+	// Route-level wins for noHappyEyeballs.
+	if or.NoHappyEyeballs == nil || *or.NoHappyEyeballs {
+		t.Errorf("route-level noHappyEyeballs=false should win, got %v", or.NoHappyEyeballs)
+	}
+	// Gateway-level default inherited where the route is silent.
+	if or.DisableChunkedEncoding == nil || !*or.DisableChunkedEncoding {
+		t.Errorf("expected gateway-level disableChunkedEncoding=true inherited, got %v", or.DisableChunkedEncoding)
 	}
 }
