@@ -10,8 +10,6 @@ KIND_CLUSTER  ?= cloudflared-gateway-dev
 KIND_VERSION  ?= v0.31.0
 
 TESTBIN_DIR       ?= $(CURDIR)/testbin
-# envtest: pin both the setup-envtest binary (controller-runtime 0.23 release
-# branch, go 1.25 / k8s v0.35 compatible) and the k8s control-plane assets.
 ENVTEST_VERSION     ?= release-0.23
 ENVTEST_K8S_VERSION ?= 1.35.0
 KUBEBUILDER_ASSETS ?= $(shell setup-envtest use $(ENVTEST_K8S_VERSION) --bin-dir $(TESTBIN_DIR) -p path)
@@ -20,10 +18,8 @@ GOBIN ?= $(shell go env GOBIN)
 ifeq ($(GOBIN),)
 GOBIN := $(shell go env GOPATH)/bin
 endif
-# controller-gen is pinned via the `tool` directive in go.mod and run with
-# `go tool`. v0.20.1 matches the main module's k8s v0.35 / go 1.25 line, so its
-# deps don't perturb the build graph.
-CONTROLLER_GEN ?= go tool controller-gen
+
+CONTROLLER_GEN := go tool controller-gen
 KO             ?= $(GOBIN)/ko
 
 .PHONY: build test test-unit test-integration test-e2e test-conformance test-all vet lint clean image setup-envtest install-crds manifests generate run fmt ko ko-build ko-push chart-package chart-push dev-release install-kind kind-up kind-down kind-load kind-install kind-dev help
