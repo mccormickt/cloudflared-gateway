@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 
-	cf "github.com/cloudflare/cloudflare-go"
 	cfclient "github.com/mccormickt/cloudflared-gateway/internal/cloudflare"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -192,7 +191,7 @@ func (r *GatewayReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *
 	}
 
 	// Build ingress rules
-	var ingress []cf.UnvalidatedIngressRule
+	var ingress []cfclient.IngressRule
 	httpRules := cfclient.BuildIngressRules(httpRoutes)
 	httpRules, err = r.applyAccessPolicies(ctx, httpRules, gw, httpRoutes)
 	if err != nil {
@@ -213,7 +212,7 @@ func (r *GatewayReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *
 	tcpRules := cfclient.BuildTCPIngressRules(tcpRoutes)
 	tcpRules = applyTCPRouteAnnotations(tcpRules, tcpRoutes)
 	ingress = append(ingress, tcpRules...)
-	ingress = append(ingress, cf.UnvalidatedIngressRule{Service: "http_status:404"})
+	ingress = append(ingress, cfclient.IngressRule{Service: "http_status:404"})
 
 	// Push config
 	if err := r.CloudflareClient.UpdateTunnelConfiguration(ctx, tunnel.ID, ingress); err != nil {

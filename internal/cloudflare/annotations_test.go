@@ -3,8 +3,6 @@ package cloudflare
 import (
 	"testing"
 	"time"
-
-	cf "github.com/cloudflare/cloudflare-go"
 )
 
 func TestParseOriginAnnotations_ProxyType(t *testing.T) {
@@ -23,9 +21,9 @@ func TestParseOriginAnnotations_ProxyType(t *testing.T) {
 	}
 }
 
-func TestParseOriginAnnotations_BastionMode(t *testing.T) {
+func TestParseOriginAnnotations_DisableChunkedEncoding(t *testing.T) {
 	annotations := map[string]string{
-		"tunnels.cloudflare.com/bastion-mode": "true",
+		"tunnels.cloudflare.com/disable-chunked-encoding": "true",
 	}
 	cfg, warnings := ParseOriginAnnotations(annotations)
 	if len(warnings) != 0 {
@@ -34,15 +32,14 @@ func TestParseOriginAnnotations_BastionMode(t *testing.T) {
 	if cfg == nil {
 		t.Fatal("expected non-nil config")
 	}
-	if cfg.BastionMode == nil || !*cfg.BastionMode {
-		t.Errorf("bastionMode: got %v, want true", cfg.BastionMode)
+	if cfg.DisableChunkedEncoding == nil || !*cfg.DisableChunkedEncoding {
+		t.Errorf("disableChunkedEncoding: got %v, want true", cfg.DisableChunkedEncoding)
 	}
 }
 
 func TestParseOriginAnnotations_Multiple(t *testing.T) {
 	annotations := map[string]string{
 		"tunnels.cloudflare.com/proxy-type":               "socks",
-		"tunnels.cloudflare.com/bastion-mode":             "true",
 		"tunnels.cloudflare.com/disable-chunked-encoding": "true",
 		"tunnels.cloudflare.com/keep-alive-connections":   "10",
 		"tunnels.cloudflare.com/keep-alive-timeout":       "30s",
@@ -58,16 +55,13 @@ func TestParseOriginAnnotations_Multiple(t *testing.T) {
 	if cfg.ProxyType == nil || *cfg.ProxyType != "socks" {
 		t.Errorf("proxyType: got %v", cfg.ProxyType)
 	}
-	if cfg.BastionMode == nil || !*cfg.BastionMode {
-		t.Errorf("bastionMode: got %v", cfg.BastionMode)
-	}
 	if cfg.DisableChunkedEncoding == nil || !*cfg.DisableChunkedEncoding {
 		t.Errorf("disableChunkedEncoding: got %v", cfg.DisableChunkedEncoding)
 	}
 	if cfg.KeepAliveConnections == nil || *cfg.KeepAliveConnections != 10 {
 		t.Errorf("keepAliveConnections: got %v", cfg.KeepAliveConnections)
 	}
-	if cfg.KeepAliveTimeout == nil || cfg.KeepAliveTimeout.Duration != 30*time.Second {
+	if cfg.KeepAliveTimeout == nil || *cfg.KeepAliveTimeout != 30*time.Second {
 		t.Errorf("keepAliveTimeout: got %v", cfg.KeepAliveTimeout)
 	}
 	if cfg.NoHappyEyeballs == nil || *cfg.NoHappyEyeballs {
@@ -89,7 +83,7 @@ func TestParseOriginAnnotations_Empty(t *testing.T) {
 
 func TestParseOriginAnnotations_InvalidBool(t *testing.T) {
 	annotations := map[string]string{
-		"tunnels.cloudflare.com/bastion-mode": "not-a-bool",
+		"tunnels.cloudflare.com/disable-chunked-encoding": "not-a-bool",
 	}
 	cfg, warnings := ParseOriginAnnotations(annotations)
 	if cfg != nil {
@@ -143,24 +137,24 @@ func TestParseOriginAnnotations_UnrelatedAnnotationsIgnored(t *testing.T) {
 		t.Errorf("proxyType: got %v, want socks", cfg.ProxyType)
 	}
 	// Only proxy-type should be set
-	if cfg.BastionMode != nil {
-		t.Errorf("bastionMode should be nil, got %v", cfg.BastionMode)
+	if cfg.DisableChunkedEncoding != nil {
+		t.Errorf("disableChunkedEncoding should be nil, got %v", cfg.DisableChunkedEncoding)
 	}
 }
 
 func TestMergeOriginRequest_AnnotationsDontOverride(t *testing.T) {
 	existingHost := "existing.example.com"
 	existingProxyType := ""
-	base := &cf.OriginRequestConfig{
+	base := &OriginRequest{
 		HTTPHostHeader: &existingHost,
 		ProxyType:      &existingProxyType,
 	}
 
 	annoProxyType := "socks"
-	annoBastionMode := true
-	annotations := &cf.OriginRequestConfig{
-		ProxyType:   &annoProxyType,
-		BastionMode: &annoBastionMode,
+	annoDisableChunked := true
+	annotations := &OriginRequest{
+		ProxyType:              &annoProxyType,
+		DisableChunkedEncoding: &annoDisableChunked,
 	}
 
 	result := MergeOriginRequest(base, annotations)
@@ -169,9 +163,9 @@ func TestMergeOriginRequest_AnnotationsDontOverride(t *testing.T) {
 	if result.ProxyType == nil || *result.ProxyType != "" {
 		t.Errorf("proxyType should remain %q, got %v", existingProxyType, result.ProxyType)
 	}
-	// BastionMode was nil in base — should be set from annotations
-	if result.BastionMode == nil || !*result.BastionMode {
-		t.Errorf("bastionMode should be true, got %v", result.BastionMode)
+	// DisableChunkedEncoding was nil in base — should be set from annotations
+	if result.DisableChunkedEncoding == nil || !*result.DisableChunkedEncoding {
+		t.Errorf("disableChunkedEncoding should be true, got %v", result.DisableChunkedEncoding)
 	}
 	// HTTPHostHeader was already set — should remain unchanged
 	if result.HTTPHostHeader == nil || *result.HTTPHostHeader != "existing.example.com" {
@@ -181,7 +175,7 @@ func TestMergeOriginRequest_AnnotationsDontOverride(t *testing.T) {
 
 func TestMergeOriginRequest_NilBase(t *testing.T) {
 	proxyType := "socks"
-	annotations := &cf.OriginRequestConfig{
+	annotations := &OriginRequest{
 		ProxyType: &proxyType,
 	}
 
@@ -193,7 +187,7 @@ func TestMergeOriginRequest_NilBase(t *testing.T) {
 
 func TestMergeOriginRequest_NilAnnotations(t *testing.T) {
 	host := "example.com"
-	base := &cf.OriginRequestConfig{
+	base := &OriginRequest{
 		HTTPHostHeader: &host,
 	}
 
