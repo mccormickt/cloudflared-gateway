@@ -132,18 +132,27 @@ The full chart value reference lives in [`charts/cloudflared-gateway/values.yaml
 | `controllerName` | `GatewayClass.spec.controllerName` value the controller claims (default: `jan0ski.net/cloudflared-gateway`) |
 | `resources` | Pod resource requests and limits |
 
-### Route annotations
+### Origin request tuning (CloudflareOriginPolicy)
 
-Per-route Cloudflare origin settings can be set via annotations with the `tunnels.cloudflare.com/` prefix. These map to Cloudflare's [`originRequest`](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/configure-tunnels/origin-configuration/) fields. Source of truth: [`internal/cloudflare/annotations.go`](internal/cloudflare/annotations.go).
+Per-route Cloudflare origin settings are configured with the typed `CloudflareOriginPolicy` CRD (Inherited Policy, [GEP-713](https://gateway-api.sigs.k8s.io/geps/gep-713/)) — this replaces the former `tunnels.cloudflare.com/*` route annotations. A policy targeting a `Gateway` is the default for every attached route; a policy targeting a route overrides it for that route. Fields map to Cloudflare's [`originRequest`](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/configure-tunnels/origin-configuration/) object. See [`examples/cloudflare-origin-policy.yaml`](examples/cloudflare-origin-policy.yaml).
 
-| Annotation | Type |
-|------------|------|
-| `tunnels.cloudflare.com/proxy-type` | string |
-| `tunnels.cloudflare.com/bastion-mode` | bool |
-| `tunnels.cloudflare.com/disable-chunked-encoding` | bool |
-| `tunnels.cloudflare.com/keep-alive-connections` | int |
-| `tunnels.cloudflare.com/keep-alive-timeout` | duration (e.g. `30s`) |
-| `tunnels.cloudflare.com/no-happy-eyeballs` | bool |
+| Field | Type |
+|-------|------|
+| `proxyType` | string (enum: `socks`) |
+| `disableChunkedEncoding` | bool |
+| `keepAliveConnections` | int |
+| `keepAliveTimeout` | duration (e.g. `30s`) |
+| `noHappyEyeballs` | bool |
+| `tlsTimeout` | duration |
+| `tcpKeepAlive` | duration |
+| `http2Origin` | bool |
+| `matchSNIToHost` | bool |
+
+Fields owned by other mechanisms are intentionally not exposed here: Access (`CloudflareAccessPolicy`), origin TLS (`BackendTLSPolicy`), `httpHostHeader` (HTTPRoute filters), and `connectTimeout` (HTTPRoute timeouts).
+
+### Tunnel infrastructure (CloudflareTunnelConfig)
+
+The cloudflared Deployment is customized with the `CloudflareTunnelConfig` CRD, referenced via `GatewayClass.spec.parametersRef` (cluster-wide default) or `Gateway.spec.infrastructure.parametersRef` (per-Gateway override). It exposes `replicas`, `image`, `resources`, `logLevel`, `metricsPort`, pod labels/annotations, and scheduling (`nodeSelector`/`tolerations`/`affinity`). The pod security context is always fixed by the controller. See [`examples/cloudflare-tunnel-config.yaml`](examples/cloudflare-tunnel-config.yaml).
 
 ## CloudflareAccessPolicy
 
@@ -229,8 +238,8 @@ make kind-down          # Tear down
 cmd/                            Entrypoint; builds the manager and wires dependencies
 internal/
   controller/                   GatewayReconciler, watches, attachment validation, status patching
-  cloudflare/                   Cloudflare API client, ingress rule building, annotation parsing
-api/v1alpha1/                   CloudflareAccessPolicy CRD types (group: cloudflare.jan0ski.net)
+  cloudflare/                   cloudflare-go v7 client + domain-type boundary, ingress rule building
+api/v1alpha1/                   CRD types (group: cloudflare.jan0ski.net): CloudflareAccessPolicy, CloudflareOriginPolicy, CloudflareTunnelConfig
 config/
   crd/                          Generated CRD manifests
   rbac/                         Generated RBAC manifests

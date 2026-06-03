@@ -16,8 +16,9 @@ import (
 type CloudflareAccessPolicy struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
-	Spec              CloudflareAccessPolicySpec   `json:"spec"`
-	Status            CloudflareAccessPolicyStatus `json:"status,omitempty"`
+	Spec              CloudflareAccessPolicySpec `json:"spec"`
+	// +optional
+	Status gwapiv1.PolicyStatus `json:"status,omitempty"`
 }
 
 type CloudflareAccessPolicySpec struct {
@@ -41,13 +42,6 @@ type CloudflareAccessPolicySpec struct {
 	Required bool `json:"required,omitempty"`
 	// AudTag is the audience tags to verify against Access JWT aud claim.
 	AudTag []string `json:"audTag,omitempty"`
-}
-
-type CloudflareAccessPolicyStatus struct {
-	// Conditions describe the current state of the policy.
-	// +listType=map
-	// +listMapKey=type
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true

@@ -3,6 +3,8 @@ package controller
 import (
 	"fmt"
 
+	cfv1alpha1 "github.com/mccormickt/cloudflared-gateway/api/v1alpha1"
+
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -10,8 +12,11 @@ import (
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
-// ContainerImage is the cloudflared container image used in the tunnel deployment.
+// ContainerImage is the default cloudflared container image used in the tunnel deployment.
 const ContainerImage = "cloudflare/cloudflared:2024.12.2"
+
+// defaultMetricsPort is the default cloudflared metrics port.
+const defaultMetricsPort int32 = 2000
 
 // DeploymentName returns the cloudflared Deployment name for a Gateway.
 func DeploymentName(gwName string) string {
@@ -19,10 +24,36 @@ func DeploymentName(gwName string) string {
 }
 
 // BuildCloudflaredDeployment creates the cloudflared Deployment spec for a Gateway.
-// The tunnel token is read from the referenced Secret.
-func BuildCloudflaredDeployment(gw *gwapiv1.Gateway, secretName string) *appsv1.Deployment {
-	var replicas int32 = 2
+// The tunnel token is read from the referenced Secret. Non-nil fields of cfg
+// (resolved from a CloudflareTunnelConfig via parametersRef) override the
+// built-in defaults; the pod security context is always fixed.
+func BuildCloudflaredDeployment(gw *gwapiv1.Gateway, secretName string, cfg *cfv1alpha1.CloudflareTunnelConfigSpec) *appsv1.Deployment {
+	replicas := int32(2)
+	image := ContainerImage
+	metricsPort := defaultMetricsPort
+	if cfg != nil {
+		if cfg.Replicas != nil {
+			replicas = *cfg.Replicas
+		}
+		if cfg.Image != nil {
+			image = *cfg.Image
+		}
+		if cfg.MetricsPort != nil {
+			metricsPort = *cfg.MetricsPort
+		}
+	}
+
+	args := []string{"tunnel", "--metrics", fmt.Sprintf("0.0.0.0:%d", metricsPort)}
+	if cfg != nil && cfg.LogLevel != nil {
+		args = append(args, "--loglevel", *cfg.LogLevel)
+	}
+	args = append(args, "run")
+
 	deployName := DeploymentName(gw.Name)
+	// selectorLabels is immutable on a Deployment, so it must stay fixed: it only
+	// ever carries the identity label. PodLabels and Gateway infrastructure labels
+	// are layered onto the object/template labels only, never the selector.
+	selectorLabels := map[string]string{"app": deployName}
 	labels := map[string]string{"app": deployName}
 
 	deployment := &appsv1.Deployment{
@@ -42,7 +73,7 @@ func BuildCloudflaredDeployment(gw *gwapiv1.Gateway, secretName string) *appsv1.
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replicas,
 			Selector: &metav1.LabelSelector{
-				MatchLabels: labels,
+				MatchLabels: selectorLabels,
 			},
 			Template: v1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
@@ -51,8 +82,8 @@ func BuildCloudflaredDeployment(gw *gwapiv1.Gateway, secretName string) *appsv1.
 				Spec: v1.PodSpec{
 					Containers: []v1.Container{{
 						Name:  "cloudflared",
-						Image: ContainerImage,
-						Args:  []string{"tunnel", "--metrics", "0.0.0.0:2000", "run"},
+						Image: image,
+						Args:  args,
 						SecurityContext: &v1.SecurityContext{
 							AllowPrivilegeEscalation: boolPtr(false),
 							RunAsNonRoot:             boolPtr(true),
@@ -78,7 +109,7 @@ func BuildCloudflaredDeployment(gw *gwapiv1.Gateway, secretName string) *appsv1.
 						}},
 						Ports: []v1.ContainerPort{{
 							Name:          "metrics",
-							ContainerPort: 2000,
+							ContainerPort: metricsPort,
 						}},
 					}},
 				},
@@ -97,6 +128,29 @@ func BuildCloudflaredDeployment(gw *gwapiv1.Gateway, secretName string) *appsv1.
 				},
 			},
 		},
+	}
+
+	// Overlay CloudflareTunnelConfig customization onto the pod template.
+	if cfg != nil {
+		container := &deployment.Spec.Template.Spec.Containers[0]
+		if cfg.Resources != nil {
+			container.Resources = *cfg.Resources
+		}
+		pod := &deployment.Spec.Template
+		for k, v := range cfg.PodLabels {
+			pod.Labels[k] = v
+		}
+		if len(cfg.PodAnnotations) > 0 {
+			if pod.Annotations == nil {
+				pod.Annotations = make(map[string]string)
+			}
+			for k, v := range cfg.PodAnnotations {
+				pod.Annotations[k] = v
+			}
+		}
+		pod.Spec.NodeSelector = cfg.NodeSelector
+		pod.Spec.Tolerations = cfg.Tolerations
+		pod.Spec.Affinity = cfg.Affinity
 	}
 
 	// Propagate Gateway infrastructure labels and annotations to the Deployment and pod template.

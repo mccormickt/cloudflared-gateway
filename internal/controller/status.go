@@ -11,14 +11,10 @@ import (
 )
 
 // PatchGatewayClassStatus sets the Accepted condition on a GatewayClass.
-func PatchGatewayClassStatus(ctx context.Context, c client.Client, gc *gwapiv1.GatewayClass, accepted bool) error {
+func PatchGatewayClassStatus(ctx context.Context, c client.Client, gc *gwapiv1.GatewayClass, accepted bool, reason, message string) error {
 	status := metav1.ConditionTrue
-	reason := string(gwapiv1.GatewayClassReasonAccepted)
-	message := "GatewayClass is accepted"
 	if !accepted {
 		status = metav1.ConditionFalse
-		reason = "InvalidParameters"
-		message = "GatewayClass controller name does not match"
 	}
 
 	condition := metav1.Condition{
@@ -97,7 +93,7 @@ func PatchGatewayStatus(ctx context.Context, c client.Client, gw *gwapiv1.Gatewa
 }
 
 // PatchHTTPRouteStatus sets the Accepted condition for a specific parentRef on an HTTPRoute.
-func PatchHTTPRouteStatus(ctx context.Context, c client.Client, route *gwapiv1.HTTPRoute, gwName, gwNS string, accepted bool) error {
+func PatchHTTPRouteStatus(ctx context.Context, c client.Client, route *gwapiv1.HTTPRoute, gwName, gwNS string, accepted, policyAffected bool) error {
 	status := metav1.ConditionTrue
 	reason := string(gwapiv1.RouteReasonAccepted)
 	message := "Route is accepted"
@@ -129,12 +125,15 @@ func PatchHTTPRouteStatus(ctx context.Context, c client.Client, route *gwapiv1.H
 		}},
 	}
 
+	if policyAffected {
+		parentStatus.Conditions = append(parentStatus.Conditions, policyAffectedRouteCondition(route.Generation, route.Status.Parents, gwName, gwNS))
+	}
 	route.Status.Parents = setParentStatus(route.Status.Parents, parentStatus, gwName, gwNS)
 	return c.Status().Update(ctx, route)
 }
 
 // PatchTLSRouteStatus sets the Accepted condition for a specific parentRef on a TLSRoute.
-func PatchTLSRouteStatus(ctx context.Context, c client.Client, route *gwapiv1alpha2.TLSRoute, gwName, gwNS string, accepted bool) error {
+func PatchTLSRouteStatus(ctx context.Context, c client.Client, route *gwapiv1alpha2.TLSRoute, gwName, gwNS string, accepted, policyAffected bool) error {
 	status := metav1.ConditionTrue
 	reason := string(gwapiv1.RouteReasonAccepted)
 	message := "Route is accepted"
@@ -166,12 +165,15 @@ func PatchTLSRouteStatus(ctx context.Context, c client.Client, route *gwapiv1alp
 		}},
 	}
 
+	if policyAffected {
+		parentStatus.Conditions = append(parentStatus.Conditions, policyAffectedRouteCondition(route.Generation, route.Status.Parents, gwName, gwNS))
+	}
 	route.Status.Parents = setParentStatus(route.Status.Parents, parentStatus, gwName, gwNS)
 	return c.Status().Update(ctx, route)
 }
 
 // PatchTCPRouteStatus sets the Accepted condition for a specific parentRef on a TCPRoute.
-func PatchTCPRouteStatus(ctx context.Context, c client.Client, route *gwapiv1alpha2.TCPRoute, gwName, gwNS string, accepted bool) error {
+func PatchTCPRouteStatus(ctx context.Context, c client.Client, route *gwapiv1alpha2.TCPRoute, gwName, gwNS string, accepted, policyAffected bool) error {
 	status := metav1.ConditionTrue
 	reason := string(gwapiv1.RouteReasonAccepted)
 	message := "Route is accepted"
@@ -203,12 +205,15 @@ func PatchTCPRouteStatus(ctx context.Context, c client.Client, route *gwapiv1alp
 		}},
 	}
 
+	if policyAffected {
+		parentStatus.Conditions = append(parentStatus.Conditions, policyAffectedRouteCondition(route.Generation, route.Status.Parents, gwName, gwNS))
+	}
 	route.Status.Parents = setParentStatus(route.Status.Parents, parentStatus, gwName, gwNS)
 	return c.Status().Update(ctx, route)
 }
 
 // PatchGRPCRouteStatus sets the Accepted condition for a specific parentRef on a GRPCRoute.
-func PatchGRPCRouteStatus(ctx context.Context, c client.Client, route *gwapiv1.GRPCRoute, gwName, gwNS string, accepted bool) error {
+func PatchGRPCRouteStatus(ctx context.Context, c client.Client, route *gwapiv1.GRPCRoute, gwName, gwNS string, accepted, policyAffected bool) error {
 	status := metav1.ConditionTrue
 	reason := string(gwapiv1.RouteReasonAccepted)
 	message := "Route is accepted"
@@ -240,6 +245,9 @@ func PatchGRPCRouteStatus(ctx context.Context, c client.Client, route *gwapiv1.G
 		}},
 	}
 
+	if policyAffected {
+		parentStatus.Conditions = append(parentStatus.Conditions, policyAffectedRouteCondition(route.Generation, route.Status.Parents, gwName, gwNS))
+	}
 	route.Status.Parents = setParentStatus(route.Status.Parents, parentStatus, gwName, gwNS)
 	return c.Status().Update(ctx, route)
 }
@@ -318,6 +326,25 @@ func routeTransitionTime(parents []gwapiv1.RouteParentStatus, gwName, gwNS strin
 		}
 		for _, c := range p.Conditions {
 			if c.Type == string(gwapiv1.RouteConditionAccepted) && c.Status == newStatus {
+				return c.LastTransitionTime
+			}
+		}
+	}
+	return metav1.Now()
+}
+
+// routeCondTransitionTime returns the existing lastTransitionTime for a route's
+// parent condition of the given type if the status matches, or metav1.Now().
+func routeCondTransitionTime(parents []gwapiv1.RouteParentStatus, gwName, gwNS, condType string, newStatus metav1.ConditionStatus) metav1.Time {
+	for _, p := range parents {
+		if string(p.ParentRef.Name) != gwName || p.ControllerName != gwapiv1.GatewayController(ControllerName) {
+			continue
+		}
+		if p.ParentRef.Namespace != nil && string(*p.ParentRef.Namespace) != gwNS {
+			continue
+		}
+		for _, c := range p.Conditions {
+			if c.Type == condType && c.Status == newStatus {
 				return c.LastTransitionTime
 			}
 		}

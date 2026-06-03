@@ -45,16 +45,19 @@ Cleanup (on Gateway deletion) is best-effort: continues through individual failu
 
 - **`cmd/`** — Entrypoint (`main.go`), creates manager and wires dependencies
 - **`internal/controller/`** — `GatewayReconciler` with `SetupWithManager`, attachment validation, status patching, secret management, deployment builder
-- **`internal/cloudflare/`** — `APIClient` interface + real impl, ingress rule building, tunnel token assembly
-- **`api/v1alpha1/`** — CloudflareAccessPolicy CRD types (group: `cloudflare.jan0ski.net`)
+- **`internal/cloudflare/`** — `APIClient` interface + real impl (cloudflare-go **v7**), SDK-agnostic domain types (`Tunnel`, `IngressRule`, `OriginRequest`), ingress rule building, tunnel token assembly
+- **`api/v1alpha1/`** — CRD types (group: `cloudflare.jan0ski.net`): `CloudflareAccessPolicy`, `CloudflareOriginPolicy`, `CloudflareTunnelConfig`
 - **`config/crd/`** — Generated CRD manifests (via `make manifests`)
 - **`config/rbac/`** — Generated RBAC manifests (via `make manifests`)
 - **`examples/`** — Example Gateway API resources
 
 ### Key abstractions
 
-- **`APIClient` interface** — Tunnel CRUD + config push. Real impl wraps `cloudflare-go`; tests use a mock with call recording.
+- **`APIClient` interface** — Tunnel CRUD + config push, in terms of the package's domain types (not SDK types). Real impl wraps `cloudflare-go/v7` and translates domain → v7 params at the client boundary (`toV7Ingress`/`toV7OriginRequest` in `client.go`) — the single seam coupling the codebase to an SDK version. Tests use a mock with call recording.
 - **`GatewayReconciler`** — Holds `Client`, `CloudflareClient`, `ControllerName`. Implements `reconcile.Reconciler`. Registered via `SetupWithManager(mgr)`.
+- **`CloudflareOriginPolicy`** — Inherited policy (GEP-713) for originRequest tuning; replaces the former `tunnels.cloudflare.com/*` annotations. Gateway-level is the default; route-level overrides. Resolved/applied in `originpolicy.go`.
+- **`CloudflareTunnelConfig`** — Infrastructure-params object (not a policy) for the cloudflared Deployment. Resolved from `GatewayClass.spec.parametersRef` (cluster default) and `Gateway.spec.infrastructure.parametersRef` (per-Gateway override, wins) in `tunnelconfig.go`; overlaid onto the Deployment in `deployment.go`.
+- **Policy status** — Both policies report GEP-713 ancestor status (`status.ancestors[]`) with an `Accepted` condition (reasons `Accepted`/`Conflicted`/`TargetNotFound`); shared helpers in `policy.go`. Conflicts resolve to the oldest policy (by creationTimestamp, then namespaced name).
 - **Finalizer** (`cloudflared-gateway.jan0ski.net/cleanup`) — Ensures tunnel + deployment + secret are cleaned up before Gateway deletion.
 
 ### Route-to-ingress mapping

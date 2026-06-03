@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	cf "github.com/cloudflare/cloudflare-go"
 	cfv1alpha1 "github.com/mccormickt/cloudflared-gateway/api/v1alpha1"
 	cfclient "github.com/mccormickt/cloudflared-gateway/internal/cloudflare"
 	controller "github.com/mccormickt/cloudflared-gateway/internal/controller"
@@ -104,7 +103,7 @@ type mockCall struct {
 type mockCloudflareClient struct {
 	mu             sync.Mutex
 	calls          []mockCall
-	existingTunnel *cf.Tunnel
+	existingTunnel *cfclient.Tunnel
 	accountID      string
 }
 
@@ -137,12 +136,12 @@ func (m *mockCloudflareClient) hasCall(method string) bool {
 
 func (m *mockCloudflareClient) AccountID() string { return m.accountID }
 
-func (m *mockCloudflareClient) CreateTunnel(_ context.Context, name string, _ []byte) (cf.Tunnel, error) {
+func (m *mockCloudflareClient) CreateTunnel(_ context.Context, name string, _ []byte) (cfclient.Tunnel, error) {
 	m.record("CreateTunnel", name)
-	return cf.Tunnel{ID: "mock-tunnel-id", Name: name}, nil
+	return cfclient.Tunnel{ID: "mock-tunnel-id", Name: name}, nil
 }
 
-func (m *mockCloudflareClient) GetTunnelByName(_ context.Context, name string) (cf.Tunnel, error) {
+func (m *mockCloudflareClient) GetTunnelByName(_ context.Context, name string) (cfclient.Tunnel, error) {
 	m.record("GetTunnelByName", name)
 	m.mu.Lock()
 	existing := m.existingTunnel
@@ -150,7 +149,7 @@ func (m *mockCloudflareClient) GetTunnelByName(_ context.Context, name string) (
 	if existing != nil && existing.Name == name {
 		return *existing, nil
 	}
-	return cf.Tunnel{}, cfclient.ErrTunnelNotFound
+	return cfclient.Tunnel{}, cfclient.ErrTunnelNotFound
 }
 
 func (m *mockCloudflareClient) DeleteTunnel(_ context.Context, id string) error {
@@ -158,7 +157,7 @@ func (m *mockCloudflareClient) DeleteTunnel(_ context.Context, id string) error 
 	return nil
 }
 
-func (m *mockCloudflareClient) UpdateTunnelConfiguration(_ context.Context, tunnelID string, ingress []cf.UnvalidatedIngressRule) error {
+func (m *mockCloudflareClient) UpdateTunnelConfiguration(_ context.Context, tunnelID string, ingress []cfclient.IngressRule) error {
 	m.record("UpdateTunnelConfiguration", tunnelID, len(ingress))
 	return nil
 }
@@ -533,6 +532,69 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 		}
 	})
 
+	t.Run("OriginPolicyStatus", func(t *testing.T) {
+		gw := makeGateway("integ-gw-origin", "default", gc.Name)
+		if err := k8sClient.Create(ctx, gw); err != nil {
+			t.Fatalf("failed to create Gateway: %v", err)
+		}
+		t.Cleanup(func() { k8sClient.Delete(ctx, gw) })
+
+		route := makeHTTPRoute("integ-route-origin", "default", gw.Name)
+		if err := k8sClient.Create(ctx, route); err != nil {
+			t.Fatalf("failed to create HTTPRoute: %v", err)
+		}
+		t.Cleanup(func() { k8sClient.Delete(ctx, route) })
+
+		proxyType := "socks"
+		policy := &cfv1alpha1.CloudflareOriginPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "integ-origin-pol", Namespace: "default"},
+			Spec: cfv1alpha1.CloudflareOriginPolicySpec{
+				TargetRefs: []gwapiv1.LocalPolicyTargetReference{{
+					Group: gwapiv1.GroupName,
+					Kind:  "HTTPRoute",
+					Name:  gwapiv1.ObjectName(route.Name),
+				}},
+				ProxyType: &proxyType,
+			},
+		}
+		if err := k8sClient.Create(ctx, policy); err != nil {
+			t.Fatalf("failed to create CloudflareOriginPolicy: %v", err)
+		}
+		t.Cleanup(func() { k8sClient.Delete(ctx, policy) })
+
+		// Policy should get an ancestor Accepted=True condition.
+		requireEventually(t, func() bool {
+			var p cfv1alpha1.CloudflareOriginPolicy
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: policy.Name, Namespace: policy.Namespace}, &p); err != nil {
+				return false
+			}
+			for _, a := range p.Status.Ancestors {
+				for _, c := range a.Conditions {
+					if c.Type == "Accepted" && c.Status == metav1.ConditionTrue {
+						return true
+					}
+				}
+			}
+			return false
+		}, 10*time.Second, 100*time.Millisecond, "origin policy should report Accepted ancestor status")
+
+		// The targeted route should get the PolicyAffected condition.
+		requireEventually(t, func() bool {
+			var rt gwapiv1.HTTPRoute
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: route.Name, Namespace: route.Namespace}, &rt); err != nil {
+				return false
+			}
+			for _, p := range rt.Status.Parents {
+				for _, c := range p.Conditions {
+					if c.Type == "cloudflare.jan0ski.net/PolicyAffected" && c.Status == metav1.ConditionTrue {
+						return true
+					}
+				}
+			}
+			return false
+		}, 10*time.Second, 100*time.Millisecond, "targeted route should report PolicyAffected")
+	})
+
 	t.Run("Cleanup", func(t *testing.T) {
 		// Reset mock calls for this subtest
 		mock.mu.Lock()
@@ -556,7 +618,7 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 
 		// Set existing tunnel so mock returns it during cleanup
 		mock.mu.Lock()
-		mock.existingTunnel = &cf.Tunnel{ID: "mock-tunnel-id", Name: gw.Name}
+		mock.existingTunnel = &cfclient.Tunnel{ID: "mock-tunnel-id", Name: gw.Name}
 		mock.mu.Unlock()
 
 		// Delete the Gateway

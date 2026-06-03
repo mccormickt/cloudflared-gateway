@@ -92,6 +92,15 @@ func (r *GatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	c = c.Watches(&cfv1alpha1.CloudflareAccessPolicy{},
 		handler.EnqueueRequestsFromMapFunc(r.accessPolicyToGateways))
 
+	// CloudflareOriginPolicy watch — re-enqueue all Gateways on policy changes
+	c = c.Watches(&cfv1alpha1.CloudflareOriginPolicy{},
+		handler.EnqueueRequestsFromMapFunc(r.allGatewaysRequests))
+
+	// CloudflareTunnelConfig watch — re-enqueue all Gateways; a config may be
+	// referenced cluster-wide (GatewayClass) or per-Gateway (infrastructure).
+	c = c.Watches(&cfv1alpha1.CloudflareTunnelConfig{},
+		handler.EnqueueRequestsFromMapFunc(r.allGatewaysRequests))
+
 	if err := c.Complete(r); err != nil {
 		return fmt.Errorf("building controller: %w", err)
 	}
@@ -188,10 +197,17 @@ func (r *GatewayReconciler) backendTLSPolicyToGateways(ctx context.Context, _ cl
 // changes. Since policies use targetRefs (GEP-713 Policy Attachment) that can
 // target Gateways or HTTPRoutes, determining the exact affected Gateway requires
 // inspecting all policies. Policy changes are rare, so we re-enqueue all Gateways.
-func (r *GatewayReconciler) accessPolicyToGateways(ctx context.Context, _ client.Object) []reconcile.Request {
+func (r *GatewayReconciler) accessPolicyToGateways(ctx context.Context, obj client.Object) []reconcile.Request {
+	return r.allGatewaysRequests(ctx, obj)
+}
+
+// allGatewaysRequests re-enqueues every Gateway. Used for resources (origin
+// policies, tunnel configs) whose effect on a specific Gateway is expensive to
+// determine precisely and which change rarely.
+func (r *GatewayReconciler) allGatewaysRequests(ctx context.Context, _ client.Object) []reconcile.Request {
 	var gateways gwapiv1.GatewayList
 	if err := r.Client.List(ctx, &gateways); err != nil {
-		log.FromContext(ctx).Error(err, "Failed to list Gateways for CloudflareAccessPolicy")
+		log.FromContext(ctx).Error(err, "Failed to list Gateways for watch mapping")
 		return nil
 	}
 
