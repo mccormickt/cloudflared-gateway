@@ -36,6 +36,8 @@ import (
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=tcproutes/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=referencegrants,verbs=get;list;watch
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=backendtlspolicies,verbs=get;list;watch
+// +kubebuilder:rbac:groups=gateway.networking.x-k8s.io,resources=xbackends,verbs=get;list;watch
+// +kubebuilder:rbac:groups=gateway.networking.x-k8s.io,resources=xbackends/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=cloudflare.jan0ski.net,resources=cloudflareaccesspolicies,verbs=get;list;watch
 // +kubebuilder:rbac:groups=cloudflare.jan0ski.net,resources=cloudflareaccesspolicies/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=cloudflare.jan0ski.net,resources=cloudflareoriginpolicies,verbs=get;list;watch
@@ -206,13 +208,26 @@ func (r *GatewayReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *
 		return KubeError(err)
 	}
 
+	// Resolve external XBackend references (experimental). Only fetch XBackends
+	// when the feature is enabled; the resolver still recognizes XBackend refs
+	// when disabled so they fail closed (http_status:503 + ResolvedRefs=False)
+	// rather than being mistaken for in-cluster Services.
+	var xbCol *xbBackends
+	if r.ExperimentalBackends {
+		xbCol, err = r.collectReferencedXBackends(ctx, httpRoutes, grpcRoutes, tlsRoutes, tcpRoutes)
+		if err != nil {
+			return KubeError(err)
+		}
+	}
+	resolve := r.backendResolver(xbCol)
+
 	// Build ingress rules. HTTP and gRPC share Cloudflare's hostname+path match
 	// space and can shadow each other, so they are merged and sorted into Gateway
 	// API precedence order (most-specific first) as a single band; TLS then TCP
 	// follow, then the mandatory catch-all. Policy is attached by route identity,
 	// not rule position, so the sort is safe.
-	l7 := cfclient.BuildIngressRules(httpRoutes)
-	l7 = append(l7, cfclient.BuildGRPCIngressRules(grpcRoutes)...)
+	l7 := cfclient.BuildIngressRules(httpRoutes, resolve)
+	l7 = append(l7, cfclient.BuildGRPCIngressRules(grpcRoutes, resolve)...)
 	l7, err = r.applyAccessPolicies(ctx, l7, gw)
 	if err != nil {
 		return KubeError(err)
@@ -220,14 +235,14 @@ func (r *GatewayReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *
 	applyOriginPolicies(originPolicies, gw.Name, l7)
 	cfclient.SortByPrecedence(l7)
 
-	tlsRules := cfclient.BuildTLSIngressRules(tlsRoutes)
+	tlsRules := cfclient.BuildTLSIngressRules(tlsRoutes, resolve)
 	tlsRules, err = r.applyBackendTLSPolicies(ctx, tlsRules, tlsRoutes)
 	if err != nil {
 		return KubeError(err)
 	}
 	applyOriginPolicies(originPolicies, gw.Name, tlsRules)
 
-	tcpRules := cfclient.BuildTCPIngressRules(tcpRoutes)
+	tcpRules := cfclient.BuildTCPIngressRules(tcpRoutes, resolve)
 	applyOriginPolicies(originPolicies, gw.Name, tcpRules)
 
 	ingress := make([]cfclient.IngressRule, 0, len(l7)+len(tlsRules)+len(tcpRules)+1)
@@ -263,7 +278,8 @@ func (r *GatewayReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *
 	// kinds (access, origin) directly target it.
 	for i := range httpRoutes {
 		key := targetKey("HTTPRoute", httpRoutes[i].Name)
-		if err := PatchHTTPRouteStatus(ctx, r.Client, &httpRoutes[i], gw.Name, gw.Namespace, true, accessAffected[key], originAffected[key], unsupportedRoutes[key]); err != nil {
+		resolved := r.routeResolvedRefs(httpRoutes[i].Namespace, "HTTPRoute", httpRouteObjRefs(&httpRoutes[i]), xbCol)
+		if err := PatchHTTPRouteStatus(ctx, r.Client, &httpRoutes[i], gw.Name, gw.Namespace, true, accessAffected[key], originAffected[key], unsupportedRoutes[key], resolved); err != nil {
 			logger.Error(err, "Failed to patch HTTPRoute status", "route", httpRoutes[i].Name)
 			if statusErr == nil {
 				statusErr = err
@@ -272,7 +288,8 @@ func (r *GatewayReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *
 	}
 	for i := range grpcRoutes {
 		key := targetKey("GRPCRoute", grpcRoutes[i].Name)
-		if err := PatchGRPCRouteStatus(ctx, r.Client, &grpcRoutes[i], gw.Name, gw.Namespace, true, accessAffected[key], originAffected[key], unsupportedRoutes[key]); err != nil {
+		resolved := r.routeResolvedRefs(grpcRoutes[i].Namespace, "GRPCRoute", grpcRouteObjRefs(&grpcRoutes[i]), xbCol)
+		if err := PatchGRPCRouteStatus(ctx, r.Client, &grpcRoutes[i], gw.Name, gw.Namespace, true, accessAffected[key], originAffected[key], unsupportedRoutes[key], resolved); err != nil {
 			logger.Error(err, "Failed to patch GRPCRoute status", "route", grpcRoutes[i].Name)
 			if statusErr == nil {
 				statusErr = err
@@ -281,7 +298,8 @@ func (r *GatewayReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *
 	}
 	for i := range tlsRoutes {
 		key := targetKey("TLSRoute", tlsRoutes[i].Name)
-		if err := PatchTLSRouteStatus(ctx, r.Client, &tlsRoutes[i], gw.Name, gw.Namespace, true, accessAffected[key], originAffected[key]); err != nil {
+		resolved := r.routeResolvedRefs(tlsRoutes[i].Namespace, "TLSRoute", tlsRouteObjRefs(&tlsRoutes[i]), xbCol)
+		if err := PatchTLSRouteStatus(ctx, r.Client, &tlsRoutes[i], gw.Name, gw.Namespace, true, accessAffected[key], originAffected[key], resolved); err != nil {
 			logger.Error(err, "Failed to patch TLSRoute status", "route", tlsRoutes[i].Name)
 			if statusErr == nil {
 				statusErr = err
@@ -290,11 +308,21 @@ func (r *GatewayReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *
 	}
 	for i := range tcpRoutes {
 		key := targetKey("TCPRoute", tcpRoutes[i].Name)
-		if err := PatchTCPRouteStatus(ctx, r.Client, &tcpRoutes[i], gw.Name, gw.Namespace, true, accessAffected[key], originAffected[key]); err != nil {
+		resolved := r.routeResolvedRefs(tcpRoutes[i].Namespace, "TCPRoute", tcpRouteObjRefs(&tcpRoutes[i]), xbCol)
+		if err := PatchTCPRouteStatus(ctx, r.Client, &tcpRoutes[i], gw.Name, gw.Namespace, true, accessAffected[key], originAffected[key], resolved); err != nil {
 			logger.Error(err, "Failed to patch TCPRoute status", "route", tcpRoutes[i].Name)
 			if statusErr == nil {
 				statusErr = err
 			}
+		}
+	}
+
+	// Patch XBackend ancestor status for the backends this Gateway serves
+	// (and prune stale ancestor entries). No-op when experimental support is off.
+	if err := r.patchXBackendStatuses(ctx, gw, xbCol); err != nil {
+		logger.Error(err, "Failed to patch XBackend statuses")
+		if statusErr == nil {
+			statusErr = err
 		}
 	}
 

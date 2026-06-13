@@ -50,7 +50,7 @@ func TestApplyAccessPolicies_GatewayTarget(t *testing.T) {
 	}
 
 	httpRoutes := []gwapiv1.HTTPRoute{*route}
-	rules := cfclient.BuildIngressRules(httpRoutes)
+	rules := cfclient.BuildIngressRules(httpRoutes, cfclient.NilResolver)
 
 	rules, err := r.applyAccessPolicies(context.Background(), rules, gw)
 	if err != nil {
@@ -92,7 +92,7 @@ func TestApplyAccessPolicies_RouteTarget(t *testing.T) {
 	}
 
 	httpRoutes := []gwapiv1.HTTPRoute{*route}
-	rules := cfclient.BuildIngressRules(httpRoutes)
+	rules := cfclient.BuildIngressRules(httpRoutes, cfclient.NilResolver)
 
 	rules, err := r.applyAccessPolicies(context.Background(), rules, gw)
 	if err != nil {
@@ -120,7 +120,7 @@ func TestApplyAccessPolicies_NoPolicy(t *testing.T) {
 	}
 
 	httpRoutes := []gwapiv1.HTTPRoute{*route}
-	rules := cfclient.BuildIngressRules(httpRoutes)
+	rules := cfclient.BuildIngressRules(httpRoutes, cfclient.NilResolver)
 
 	rules, err := r.applyAccessPolicies(context.Background(), rules, gw)
 	if err != nil {
@@ -151,7 +151,7 @@ func TestApplyAccessPolicies_PolicyTargetsDifferentGateway(t *testing.T) {
 	}
 
 	httpRoutes := []gwapiv1.HTTPRoute{*route}
-	rules := cfclient.BuildIngressRules(httpRoutes)
+	rules := cfclient.BuildIngressRules(httpRoutes, cfclient.NilResolver)
 
 	rules, err := r.applyAccessPolicies(context.Background(), rules, gw)
 	if err != nil {
@@ -190,7 +190,7 @@ func TestApplyAccessPolicies_PreservesExistingOriginRequest(t *testing.T) {
 	}
 
 	httpRoutes := []gwapiv1.HTTPRoute{*route}
-	rules := cfclient.BuildIngressRules(httpRoutes)
+	rules := cfclient.BuildIngressRules(httpRoutes, cfclient.NilResolver)
 
 	rules, err := r.applyAccessPolicies(context.Background(), rules, gw)
 	if err != nil {

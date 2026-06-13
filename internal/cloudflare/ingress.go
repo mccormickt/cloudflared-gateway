@@ -43,7 +43,7 @@ type builtMatch struct {
 // tagged with route provenance and match specificity. It does NOT append a
 // catch-all, sort, or convert — callers attach policy by route identity, sort by
 // precedence, then call ToIngressRules.
-func BuildIngressRules(routes []gwapiv1.HTTPRoute) []BuiltRule {
+func BuildIngressRules(routes []gwapiv1.HTTPRoute, resolve BackendResolver) []BuiltRule {
 	var rules []BuiltRule
 
 	for i := range routes {
@@ -52,7 +52,7 @@ func BuildIngressRules(routes []gwapiv1.HTTPRoute) []BuiltRule {
 
 		for ri := range route.Spec.Rules {
 			rule := &route.Spec.Rules[ri]
-			service := backendRefToService(rule.BackendRefs, routeNS)
+			service, backendOrigin, _ := backendRefToService(rule.BackendRefs, routeNS, resolve)
 			originReq := buildOriginRequest(extractHostRewrite(rule.Filters))
 
 			// Map HTTPRoute BackendRequest timeout to Cloudflare connectTimeout.
@@ -67,6 +67,10 @@ func BuildIngressRules(routes []gwapiv1.HTTPRoute) []BuiltRule {
 				}
 			}
 
+			// Layer the XBackend's TLS/protocol-derived origin under the rule's
+			// own origin (filters, timeout): the rule's settings win.
+			originReq = MergeOriginRequest(originReq, backendOrigin)
+
 			matches := extractMatches(rule.Matches)
 			rules = append(rules, fanOutHTTPFamily("HTTPRoute", route.Name, routeNS, route.CreationTimestamp.Time, ri, route.Spec.Hostnames, service, originReq, matches)...)
 		}
@@ -77,7 +81,7 @@ func BuildIngressRules(routes []gwapiv1.HTTPRoute) []BuiltRule {
 
 // BuildGRPCIngressRules converts GRPCRoutes into Cloudflare tunnel ingress rules.
 // Every rule gets http2Origin=true since gRPC requires HTTP/2.
-func BuildGRPCIngressRules(routes []gwapiv1.GRPCRoute) []BuiltRule {
+func BuildGRPCIngressRules(routes []gwapiv1.GRPCRoute, resolve BackendResolver) []BuiltRule {
 	var rules []BuiltRule
 	http2 := true
 
@@ -87,8 +91,8 @@ func BuildGRPCIngressRules(routes []gwapiv1.GRPCRoute) []BuiltRule {
 
 		for ri := range route.Spec.Rules {
 			rule := &route.Spec.Rules[ri]
-			service := grpcBackendRefToService(rule.BackendRefs, routeNS)
-			originReq := &OriginRequest{HTTP2Origin: &http2}
+			service, backendOrigin, _ := grpcBackendRefToService(rule.BackendRefs, routeNS, resolve)
+			originReq := MergeOriginRequest(&OriginRequest{HTTP2Origin: &http2}, backendOrigin)
 			matches := extractGRPCMatches(rule.Matches)
 			rules = append(rules, fanOutHTTPFamily("GRPCRoute", route.Name, routeNS, route.CreationTimestamp.Time, ri, route.Spec.Hostnames, service, originReq, matches)...)
 		}
@@ -99,7 +103,7 @@ func BuildGRPCIngressRules(routes []gwapiv1.GRPCRoute) []BuiltRule {
 
 // BuildTLSIngressRules converts TLSRoutes into Cloudflare tunnel ingress rules.
 // TLSRoutes map SNI hostnames to HTTPS backends with noTLSVerify.
-func BuildTLSIngressRules(routes []gwapiv1alpha2.TLSRoute) []BuiltRule {
+func BuildTLSIngressRules(routes []gwapiv1alpha2.TLSRoute, resolve BackendResolver) []BuiltRule {
 	var rules []BuiltRule
 
 	for i := range routes {
@@ -108,16 +112,23 @@ func BuildTLSIngressRules(routes []gwapiv1alpha2.TLSRoute) []BuiltRule {
 
 		for ri := range route.Spec.Rules {
 			rule := &route.Spec.Rules[ri]
-			service := backendRefToTLSService(rule.BackendRefs, routeNS)
+			service, backendOrigin, external := backendRefToTLSService(rule.BackendRefs, routeNS, resolve)
 
 			emit := func(host string) {
-				noTLSVerify := true
+				// Native Service refs default to skipping origin cert verification
+				// (cluster-internal HTTPS). XBackend refs instead carry their own
+				// TLS-derived origin, so the external hostname's TLS mode governs.
+				origin := backendOrigin
+				if !external {
+					noTLSVerify := true
+					origin = &OriginRequest{NoTLSVerify: &noTLSVerify}
+				}
 				exact, length := hostnameSpecificity(host)
 				rules = append(rules, BuiltRule{
 					IngressRule: IngressRule{
 						Hostname:      host,
 						Service:       service,
-						OriginRequest: &OriginRequest{NoTLSVerify: &noTLSVerify},
+						OriginRequest: cloneOriginRequest(origin),
 					},
 					RouteKind:      "TLSRoute",
 					RouteNamespace: routeNS,
@@ -143,7 +154,7 @@ func BuildTLSIngressRules(routes []gwapiv1alpha2.TLSRoute) []BuiltRule {
 
 // BuildTCPIngressRules converts TCPRoutes into Cloudflare tunnel ingress rules.
 // TCPRoutes have no hostnames — they are port-based and map to tcp:// backends.
-func BuildTCPIngressRules(routes []gwapiv1alpha2.TCPRoute) []BuiltRule {
+func BuildTCPIngressRules(routes []gwapiv1alpha2.TCPRoute, resolve BackendResolver) []BuiltRule {
 	var rules []BuiltRule
 
 	for i := range routes {
@@ -152,9 +163,9 @@ func BuildTCPIngressRules(routes []gwapiv1alpha2.TCPRoute) []BuiltRule {
 
 		for ri := range route.Spec.Rules {
 			rule := &route.Spec.Rules[ri]
-			service := backendRefToTCPService(rule.BackendRefs, routeNS)
+			service, backendOrigin, _ := backendRefToTCPService(rule.BackendRefs, routeNS, resolve)
 			rules = append(rules, BuiltRule{
-				IngressRule:    IngressRule{Service: service},
+				IngressRule:    IngressRule{Service: service, OriginRequest: backendOrigin},
 				RouteKind:      "TCPRoute",
 				RouteNamespace: routeNS,
 				RouteName:      route.Name,
@@ -246,51 +257,87 @@ func cloneOriginRequest(o *OriginRequest) *OriginRequest {
 	return &c
 }
 
-func backendRefToTCPService(refs []gwapiv1.BackendRef, routeNS string) string {
-	if len(refs) == 0 {
-		return "http_status:503"
-	}
-	ref := refs[0]
-	if ref.Port == nil {
-		return "http_status:503"
-	}
-	ns := routeNS
-	if ref.Namespace != nil {
-		ns = string(*ref.Namespace)
-	}
-	return fmt.Sprintf("tcp://%s.%s:%d", ref.Name, ns, int(*ref.Port))
+// refIdentity is the normalized view of a backendRef used to pick between the
+// native in-cluster Service path and external XBackend resolution.
+type refIdentity struct {
+	group     string
+	kind      string
+	name      string
+	namespace string
+	port      *int
 }
 
-func backendRefToService(refs []gwapiv1.HTTPBackendRef, routeNS string) string {
-	if len(refs) == 0 {
-		return "http_status:503"
+// identFromBackendObjectRef normalizes a BackendObjectReference, defaulting kind
+// to Service and namespace to the route's namespace (Gateway API defaulting).
+func identFromBackendObjectRef(r gwapiv1.BackendObjectReference, routeNS string) refIdentity {
+	id := refIdentity{kind: "Service", name: string(r.Name), namespace: routeNS}
+	if r.Group != nil {
+		id.group = string(*r.Group)
 	}
-	ref := refs[0]
-	ns := routeNS
-	if ref.Namespace != nil {
-		ns = string(*ref.Namespace)
+	if r.Kind != nil {
+		id.kind = string(*r.Kind)
 	}
-	port := 80
-	if ref.Port != nil {
-		port = int(*ref.Port)
+	if r.Namespace != nil {
+		id.namespace = string(*r.Namespace)
 	}
-	return fmt.Sprintf("http://%s.%s:%d", ref.Name, ns, port)
+	if r.Port != nil {
+		p := int(*r.Port)
+		id.port = &p
+	}
+	return id
 }
 
-func backendRefToTLSService(refs []gwapiv1.BackendRef, routeNS string) string {
+// resolveServiceAndOrigin produces the tunnel service URL and any originRequest
+// delta for a single backendRef. For an XBackend ref it consults the resolver
+// (external=true); otherwise it builds the native scheme://name.namespace:port
+// Service URL. portRequired forces http_status:503 when a native Service ref
+// omits the port (TCP has no default port).
+func resolveServiceAndOrigin(id refIdentity, routeNS, routeKind string, resolve BackendResolver, scheme string, defaultPort int, portRequired bool) (service string, origin *OriginRequest, external bool) {
+	if rb, ok := resolve(BackendRef{
+		RouteNamespace: routeNS,
+		RouteKind:      routeKind,
+		Group:          id.group,
+		Kind:           id.kind,
+		Namespace:      id.namespace,
+		Name:           id.name,
+		Port:           id.port,
+	}); ok {
+		if rb.Service == "" {
+			return "http_status:503", nil, true
+		}
+		return rb.Service, rb.OriginRequest, true
+	}
+	port := defaultPort
+	if id.port != nil {
+		port = *id.port
+	} else if portRequired {
+		return "http_status:503", nil, false
+	}
+	return fmt.Sprintf("%s://%s.%s:%d", scheme, id.name, id.namespace, port), nil, false
+}
+
+func backendRefToTCPService(refs []gwapiv1.BackendRef, routeNS string, resolve BackendResolver) (string, *OriginRequest, bool) {
 	if len(refs) == 0 {
-		return "http_status:503"
+		return "http_status:503", nil, false
 	}
-	ref := refs[0]
-	ns := routeNS
-	if ref.Namespace != nil {
-		ns = string(*ref.Namespace)
+	id := identFromBackendObjectRef(refs[0].BackendObjectReference, routeNS)
+	return resolveServiceAndOrigin(id, routeNS, "TCPRoute", resolve, "tcp", 0, true)
+}
+
+func backendRefToService(refs []gwapiv1.HTTPBackendRef, routeNS string, resolve BackendResolver) (string, *OriginRequest, bool) {
+	if len(refs) == 0 {
+		return "http_status:503", nil, false
 	}
-	port := 443
-	if ref.Port != nil {
-		port = int(*ref.Port)
+	id := identFromBackendObjectRef(refs[0].BackendObjectReference, routeNS)
+	return resolveServiceAndOrigin(id, routeNS, "HTTPRoute", resolve, "http", 80, false)
+}
+
+func backendRefToTLSService(refs []gwapiv1.BackendRef, routeNS string, resolve BackendResolver) (string, *OriginRequest, bool) {
+	if len(refs) == 0 {
+		return "http_status:503", nil, false
 	}
-	return fmt.Sprintf("https://%s.%s:%d", ref.Name, ns, port)
+	id := identFromBackendObjectRef(refs[0].BackendObjectReference, routeNS)
+	return resolveServiceAndOrigin(id, routeNS, "TLSRoute", resolve, "https", 443, false)
 }
 
 // extractMatches converts an HTTPRoute rule's matches into per-match path
@@ -382,20 +429,12 @@ func extractHostRewrite(filters []gwapiv1.HTTPRouteFilter) *string {
 	return nil
 }
 
-func grpcBackendRefToService(refs []gwapiv1.GRPCBackendRef, routeNS string) string {
+func grpcBackendRefToService(refs []gwapiv1.GRPCBackendRef, routeNS string, resolve BackendResolver) (string, *OriginRequest, bool) {
 	if len(refs) == 0 {
-		return "http_status:503"
+		return "http_status:503", nil, false
 	}
-	ref := refs[0]
-	ns := routeNS
-	if ref.Namespace != nil {
-		ns = string(*ref.Namespace)
-	}
-	port := 80
-	if ref.Port != nil {
-		port = int(*ref.Port)
-	}
-	return fmt.Sprintf("http://%s.%s:%d", ref.Name, ns, port)
+	id := identFromBackendObjectRef(refs[0].BackendObjectReference, routeNS)
+	return resolveServiceAndOrigin(id, routeNS, "GRPCRoute", resolve, "http", 80, false)
 }
 
 // extractGRPCMatches converts a GRPCRoute rule's matches into per-match path

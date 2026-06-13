@@ -1,0 +1,47 @@
+# XBackend is the experimental Gateway API resource (gateway.networking.x-k8s.io)
+# for declaring an external FQDN destination directly, instead of a synthetic
+# ExternalName Service. Routing to one requires the controller to run with
+# --enable-experimental-backends (Helm: experimental.backends.enabled=true) and
+# the XBackend CRD installed (Gateway API experimental channel).
+#
+# Here an HTTPRoute proxies traffic to https://api.openai.com:443 through the
+# Cloudflare tunnel, with origin certificate verification (TLS ServerOnly).
+apiVersion: gateway.networking.x-k8s.io/v1alpha1
+kind: XBackend
+metadata:
+  name: openai-api
+  namespace: default
+spec:
+  type: ExternalHostname
+  port:
+    port: 443
+  externalHostname:
+    hostname: api.openai.com
+  # protocol defaults to HTTP; TLS mode ServerOnly makes the tunnel connect over
+  # HTTPS and verify the origin certificate. Supported: TCP, HTTP, HTTP2, H2C,
+  # HTTP11, GRPC (MCP and mutual-TLS ClientAndServer are not supported).
+  tls:
+    mode: ServerOnly
+    validation:
+      hostname: api.openai.com
+      # Verify the origin against the well-known system CA bundle. (Custom
+      # caCertificateRefs are not honored by Cloudflare remote-managed tunnels.)
+      wellKnownCACertificates: System
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: external-api-route
+  namespace: default
+spec:
+  parentRefs:
+    - name: cloudflare-tunnel
+      namespace: default
+  hostnames:
+    - "proxy.example.com"
+  rules:
+    - backendRefs:
+        - group: gateway.networking.x-k8s.io
+          kind: XBackend
+          name: openai-api
+          port: 443

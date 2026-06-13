@@ -1,5 +1,5 @@
 BINARY        ?= cloudflared-gateway
-GWAPI_VERSION ?= v1.5.1
+GWAPI_VERSION ?= v1.6.0-rc.1
 
 # Dev/ephemeral release tag for ko-push + chart-push targets.
 DEV_TAG       ?= dev-$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
