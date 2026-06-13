@@ -59,3 +59,26 @@ podLabels: {}
 
 # Extra env vars for the manager container (merged after CF creds).
 extraEnv: []
+
+# Experimental features.
+experimental:
+  backends:
+    # Enable support for the experimental Gateway API XBackend resource
+    # (gateway.networking.x-k8s.io), letting HTTPRoute/GRPCRoute/TLSRoute/TCPRoute
+    # target external FQDN destinations. Requires the XBackend CRD to be installed
+    # (the controller fails fast at startup otherwise).
+    enabled: false
+
+  # Opt-in: install the upstream Gateway API CRDs (experimental channel) via a
+  # pre-install/pre-upgrade hook Job. Off by default — most operators install
+  # CRDs out of band. When enabled, the hook server-side-applies the pinned
+  # experimental-install.yaml and grants itself temporary CRD-management RBAC.
+  installGatewayAPICRDs: false
+
+  # Gateway API version the CRD-install hook applies. Must be a version that
+  # ships the XBackend CRD when experimental.backends.enabled is true.
+  gatewayAPIVersion: v1.6.0-rc.1
+
+  # Image used by the CRD-install hook Job (must contain kubectl).
+  crdInstaller:
+    image: registry.k8s.io/kubectl:v1.34.1

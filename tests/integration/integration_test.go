@@ -28,9 +28,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gwapiv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
 	gwapiv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
+	apisxv1alpha1 "sigs.k8s.io/gateway-api/apisx/v1alpha1"
 )
 
 var (
@@ -46,6 +48,7 @@ func TestMain(m *testing.M) {
 	utilruntime.Must(gwapiv1.Install(testScheme))
 	utilruntime.Must(gwapiv1alpha2.Install(testScheme))
 	utilruntime.Must(gwapiv1beta1.Install(testScheme))
+	utilruntime.Must(apisxv1alpha1.Install(testScheme))
 	utilruntime.Must(cfv1alpha1.AddToScheme(testScheme))
 
 	// Find Gateway API CRDs and custom CRDs
@@ -181,6 +184,9 @@ func startManager(t *testing.T, mockCF cfclient.APIClient) {
 
 	mgr, err := ctrl.NewManager(testCfg, ctrl.Options{
 		Scheme: testScheme,
+		// Disable the metrics server: tests don't scrape it and the default
+		// :8080 bind can collide with other local listeners.
+		Metrics: metricsserver.Options{BindAddress: "0"},
 	})
 	if err != nil {
 		t.Fatalf("failed to create manager: %v", err)
@@ -189,6 +195,10 @@ func startManager(t *testing.T, mockCF cfclient.APIClient) {
 	reconciler := &controller.GatewayReconciler{
 		CloudflareClient: mockCF,
 		ControllerName:   gwapiv1.GatewayController(controller.ControllerName),
+		// Enabled for the integration manager so XBackend subtests exercise the
+		// real reconcile loop. Harmless for Service-only subtests, which never
+		// reference an XBackend.
+		ExperimentalBackends: true,
 	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		t.Fatalf("failed to setup controller: %v", err)
@@ -751,6 +761,106 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 			}
 			return false
 		}, 10*time.Second, 100*time.Millisecond, "route with a header match should report PartiallyInvalid")
+	})
+
+	t.Run("XBackendExternalOrigin", func(t *testing.T) {
+		gw := makeGateway("integ-gw-xbackend", "default", gc.Name)
+		if err := k8sClient.Create(ctx, gw); err != nil {
+			t.Fatalf("failed to create Gateway: %v", err)
+		}
+		t.Cleanup(func() { k8sClient.Delete(ctx, gw) })
+
+		systemCA := gwapiv1.WellKnownCACertificatesSystem
+		xb := &apisxv1alpha1.XBackend{
+			ObjectMeta: metav1.ObjectMeta{Name: "integ-openai", Namespace: "default"},
+			Spec: apisxv1alpha1.BackendSpec{
+				Type:             apisxv1alpha1.BackendTypeExternalHostname,
+				Port:             apisxv1alpha1.BackendPort{Port: 443},
+				ExternalHostname: &apisxv1alpha1.ExternalHostnameBackend{Hostname: "api.example.com"},
+				TLS: &apisxv1alpha1.BackendTLS{
+					Mode: apisxv1alpha1.BackendTLSModeServerOnly,
+					Validation: gwapiv1.BackendTLSPolicyValidation{
+						Hostname:                "api.example.com",
+						WellKnownCACertificates: &systemCA,
+					},
+				},
+			},
+		}
+		if err := k8sClient.Create(ctx, xb); err != nil {
+			t.Fatalf("failed to create XBackend: %v", err)
+		}
+		t.Cleanup(func() { k8sClient.Delete(ctx, xb) })
+
+		xbGroup := gwapiv1.Group(apisxv1alpha1.GroupName)
+		xbKind := gwapiv1.Kind("XBackend")
+		xbPort := gwapiv1.PortNumber(443)
+		route := makeHTTPRoute("integ-route-xbackend", "default", gw.Name)
+		route.Spec.Hostnames = []gwapiv1.Hostname{"proxy.example.com"}
+		route.Spec.Rules = []gwapiv1.HTTPRouteRule{{
+			BackendRefs: []gwapiv1.HTTPBackendRef{{
+				BackendRef: gwapiv1.BackendRef{
+					BackendObjectReference: gwapiv1.BackendObjectReference{
+						Group: &xbGroup,
+						Kind:  &xbKind,
+						Name:  "integ-openai",
+						Port:  &xbPort,
+					},
+				},
+			}},
+		}}
+		if err := k8sClient.Create(ctx, route); err != nil {
+			t.Fatalf("failed to create HTTPRoute: %v", err)
+		}
+		t.Cleanup(func() { k8sClient.Delete(ctx, route) })
+
+		// The pushed config must route to the external HTTPS origin with the
+		// validation hostname as the SNI server name and origin verification on.
+		requireEventually(t, func() bool {
+			for _, r := range mock.getLastIngress() {
+				if r.Hostname == "proxy.example.com" && r.Service == "https://api.example.com:443" {
+					return r.OriginRequest != nil &&
+						r.OriginRequest.OriginServerName != nil &&
+						*r.OriginRequest.OriginServerName == "api.example.com" &&
+						r.OriginRequest.NoTLSVerify == nil
+				}
+			}
+			return false
+		}, 10*time.Second, 100*time.Millisecond, "config should route to the external XBackend origin over HTTPS")
+
+		// The route must report ResolvedRefs=True.
+		requireEventually(t, func() bool {
+			var fetched gwapiv1.HTTPRoute
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: route.Name, Namespace: route.Namespace}, &fetched); err != nil {
+				return false
+			}
+			for _, p := range fetched.Status.Parents {
+				for _, c := range p.Conditions {
+					if c.Type == string(gwapiv1.RouteConditionResolvedRefs) {
+						return c.Status == metav1.ConditionTrue && c.Reason == string(gwapiv1.RouteReasonResolvedRefs)
+					}
+				}
+			}
+			return false
+		}, 10*time.Second, 100*time.Millisecond, "HTTPRoute should report ResolvedRefs=True")
+
+		// The XBackend must carry an Accepted ancestor condition for this Gateway.
+		requireEventually(t, func() bool {
+			var fetched apisxv1alpha1.XBackend
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: xb.Name, Namespace: xb.Namespace}, &fetched); err != nil {
+				return false
+			}
+			for _, a := range fetched.Status.Ancestors {
+				if string(a.AncestorRef.Name) != gw.Name {
+					continue
+				}
+				for _, c := range a.Conditions {
+					if c.Type == "Accepted" {
+						return c.Status == metav1.ConditionTrue
+					}
+				}
+			}
+			return false
+		}, 10*time.Second, 100*time.Millisecond, "XBackend should report Accepted ancestor status for the Gateway")
 	})
 
 	t.Run("Cleanup", func(t *testing.T) {

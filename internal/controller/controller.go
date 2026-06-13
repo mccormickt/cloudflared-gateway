@@ -17,6 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gwapiv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
+	apisxv1alpha1 "sigs.k8s.io/gateway-api/apisx/v1alpha1"
 )
 
 const (
@@ -30,6 +31,13 @@ type GatewayReconciler struct {
 	Client           client.Client
 	CloudflareClient cloudflare.APIClient
 	ControllerName   gwapiv1.GatewayController
+
+	// ExperimentalBackends enables support for the experimental Gateway API
+	// XBackend resource (gateway.networking.x-k8s.io), letting routes target
+	// external FQDN destinations. When false, routes referencing an XBackend
+	// are rejected (ResolvedRefs=False, InvalidKind) and no XBackend watch or
+	// API access occurs.
+	ExperimentalBackends bool
 }
 
 var _ reconcile.Reconciler = &GatewayReconciler{}
@@ -100,6 +108,14 @@ func (r *GatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// referenced cluster-wide (GatewayClass) or per-Gateway (infrastructure).
 	c = c.Watches(&cfv1alpha1.CloudflareTunnelConfig{},
 		handler.EnqueueRequestsFromMapFunc(r.allGatewaysRequests))
+
+	// XBackend watch — only when experimental support is enabled, since the CRD
+	// may not be installed otherwise. Re-enqueue all Gateways; an XBackend may be
+	// referenced by routes attached to any Gateway.
+	if r.ExperimentalBackends {
+		c = c.Watches(&apisxv1alpha1.XBackend{},
+			handler.EnqueueRequestsFromMapFunc(r.allGatewaysRequests))
+	}
 
 	if err := c.Complete(r); err != nil {
 		return fmt.Errorf("building controller: %w", err)

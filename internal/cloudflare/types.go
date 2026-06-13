@@ -51,3 +51,57 @@ type IngressRule struct {
 	Service       string
 	OriginRequest *OriginRequest
 }
+
+// BackendProtocol mirrors the gateway-api apisx BackendProtocol values, kept here
+// so the cloudflare package stays free of the gateway-api dependency.
+type BackendProtocol string
+
+const (
+	BackendProtocolTCP    BackendProtocol = "TCP"
+	BackendProtocolHTTP   BackendProtocol = "HTTP"
+	BackendProtocolHTTP2  BackendProtocol = "HTTP2"
+	BackendProtocolHTTP11 BackendProtocol = "HTTP11"
+	BackendProtocolH2C    BackendProtocol = "H2C"
+	BackendProtocolGRPC   BackendProtocol = "GRPC"
+	BackendProtocolMCP    BackendProtocol = "MCP"
+)
+
+// ResolvedBackend is the controller-side resolution of an external (XBackend)
+// backendRef: the fully-formed tunnel service URL plus the originRequest deltas
+// the backend's spec implies (TLS server name, NoTLSVerify, HTTP2Origin). An
+// empty Service means the ref was recognized as an XBackend but cannot be served
+// — missing, an unsupported protocol/TLS mode, or the feature is disabled — and
+// the builder emits http_status:503 for it.
+type ResolvedBackend struct {
+	Service       string
+	OriginRequest *OriginRequest
+}
+
+// BackendRef is the normalized view of a route backendRef passed to a
+// BackendResolver. RouteNamespace and RouteKind identify the referencing route
+// (the ReferenceGrant "from" identity); Group/Kind/Namespace/Name/Port identify
+// the backend the ref points at, with Namespace already defaulted to the route's
+// namespace when the ref omitted it.
+type BackendRef struct {
+	RouteNamespace string
+	RouteKind      string
+	Group          string
+	Kind           string
+	Namespace      string
+	Name           string
+	Port           *int
+}
+
+// BackendResolver resolves a route backendRef that may target an external
+// XBackend. It returns ok=false for any ref the cloudflare package should handle
+// with its native in-cluster Service logic (i.e. non-XBackend refs); ok=true
+// (with a possibly-empty ResolvedBackend.Service) for XBackend refs. The
+// controller supplies the implementation, closing over the XBackends it
+// pre-fetched for the reconcile.
+type BackendResolver func(ref BackendRef) (ResolvedBackend, bool)
+
+// NilResolver declines every ref, so all backendRefs use the native Service path.
+// It is the default when experimental backend support is disabled.
+func NilResolver(ref BackendRef) (ResolvedBackend, bool) {
+	return ResolvedBackend{}, false
+}
