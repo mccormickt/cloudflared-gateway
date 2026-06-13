@@ -23,6 +23,12 @@ import (
 
 var scheme = runtime.NewScheme()
 
+// builtAgainstGatewayAPIVersion is the Gateway API bundle version this controller
+// is built against (kept in step with GWAPI_VERSION in the Makefile). The
+// preflight check warns — or, with experimental backends, fails — when the
+// cluster's installed bundle is older.
+const builtAgainstGatewayAPIVersion = "v1.6.0-rc.1"
+
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(gwapiv1.Install(scheme))
@@ -64,8 +70,9 @@ func main() {
 
 	cfg := ctrl.GetConfigOrDie()
 
-	// Fail fast if the Gateway API CRDs this controller needs aren't installed.
-	if err := controller.PreflightCheckCRDs(cfg, *enableExperimentalBackends); err != nil {
+	// Fail fast if the Gateway API CRDs this controller needs aren't installed,
+	// and check the installed bundle's channel/version for compatibility.
+	if err := controller.PreflightCheckCRDs(cfg, *enableExperimentalBackends, builtAgainstGatewayAPIVersion, logger); err != nil {
 		logger.Error(err, "Gateway API CRD preflight check failed")
 		os.Exit(1)
 	}

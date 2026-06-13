@@ -156,6 +156,8 @@ func resolvedRefsResultFor(reason string) ResolvedRefsResult {
 		return ResolvedRefsResult{Reason: string(gwapiv1.RouteReasonRefNotPermitted), Message: "Cross-namespace XBackend reference is not permitted by any ReferenceGrant"}
 	case reasonUnsupportedProtocol:
 		return ResolvedRefsResult{Reason: "UnsupportedProtocol", Message: "Referenced XBackend uses a protocol or TLS mode Cloudflare tunnels cannot serve"}
+	case reasonUnsupportedCACerts:
+		return ResolvedRefsResult{Reason: "UnsupportedCACerts", Message: "Referenced XBackend pins custom caCertificateRefs, which are not supported; use wellKnownCACertificates: System"}
 	default:
 		return ResolvedRefsResult{Reason: "InvalidBackend", Message: "Referenced XBackend could not be resolved"}
 	}

@@ -863,6 +863,141 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 		}, 10*time.Second, 100*time.Millisecond, "XBackend should report Accepted ancestor status for the Gateway")
 	})
 
+	t.Run("XBackendCrossNamespace", func(t *testing.T) {
+		gw := makeGateway("integ-gw-xbackend-xns", "default", gc.Name)
+		if err := k8sClient.Create(ctx, gw); err != nil {
+			t.Fatalf("failed to create Gateway: %v", err)
+		}
+		t.Cleanup(func() { k8sClient.Delete(ctx, gw) })
+
+		systemCA := gwapiv1.WellKnownCACertificatesSystem
+		makeXB := func(ns string) *apisxv1alpha1.XBackend {
+			return &apisxv1alpha1.XBackend{
+				ObjectMeta: metav1.ObjectMeta{Name: "integ-xns-backend", Namespace: ns},
+				Spec: apisxv1alpha1.BackendSpec{
+					Type:             apisxv1alpha1.BackendTypeExternalHostname,
+					Port:             apisxv1alpha1.BackendPort{Port: 443},
+					ExternalHostname: &apisxv1alpha1.ExternalHostnameBackend{Hostname: "api.example.com"},
+					TLS: &apisxv1alpha1.BackendTLS{
+						Mode: apisxv1alpha1.BackendTLSModeServerOnly,
+						Validation: gwapiv1.BackendTLSPolicyValidation{
+							Hostname:                "api.example.com",
+							WellKnownCACertificates: &systemCA,
+						},
+					},
+				},
+			}
+		}
+
+		xbGroup := gwapiv1.Group(apisxv1alpha1.GroupName)
+		xbKind := gwapiv1.Kind("XBackend")
+		xbPort := gwapiv1.PortNumber(443)
+		makeXNSRoute := func(name, hostname, backendNS string) *gwapiv1.HTTPRoute {
+			ns := gwapiv1.Namespace(backendNS)
+			route := makeHTTPRoute(name, "default", gw.Name)
+			route.Spec.Hostnames = []gwapiv1.Hostname{gwapiv1.Hostname(hostname)}
+			route.Spec.Rules = []gwapiv1.HTTPRouteRule{{
+				BackendRefs: []gwapiv1.HTTPBackendRef{{
+					BackendRef: gwapiv1.BackendRef{
+						BackendObjectReference: gwapiv1.BackendObjectReference{
+							Group:     &xbGroup,
+							Kind:      &xbKind,
+							Namespace: &ns,
+							Name:      "integ-xns-backend",
+							Port:      &xbPort,
+						},
+					},
+				}},
+			}}
+			return route
+		}
+
+		routeResolvedRefs := func(name string) (metav1.ConditionStatus, string, bool) {
+			var rt gwapiv1.HTTPRoute
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: "default"}, &rt); err != nil {
+				return "", "", false
+			}
+			for _, p := range rt.Status.Parents {
+				for _, c := range p.Conditions {
+					if c.Type == string(gwapiv1.RouteConditionResolvedRefs) {
+						return c.Status, c.Reason, true
+					}
+				}
+			}
+			return "", "", false
+		}
+
+		// Scenario A: no ReferenceGrant in the backend namespace. The cross-namespace
+		// XBackend ref must be denied -> ResolvedRefs=False, reason RefNotPermitted.
+		nsNoGrant := &v1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "integ-xb-nogrant"}}
+		if err := k8sClient.Create(ctx, nsNoGrant); err != nil {
+			t.Fatalf("failed to create namespace: %v", err)
+		}
+		t.Cleanup(func() { k8sClient.Delete(ctx, nsNoGrant) })
+
+		xbNoGrant := makeXB(nsNoGrant.Name)
+		if err := k8sClient.Create(ctx, xbNoGrant); err != nil {
+			t.Fatalf("failed to create XBackend: %v", err)
+		}
+		t.Cleanup(func() { k8sClient.Delete(ctx, xbNoGrant) })
+
+		routeDenied := makeXNSRoute("integ-route-xns-denied", "denied.example.com", nsNoGrant.Name)
+		if err := k8sClient.Create(ctx, routeDenied); err != nil {
+			t.Fatalf("failed to create HTTPRoute: %v", err)
+		}
+		t.Cleanup(func() { k8sClient.Delete(ctx, routeDenied) })
+
+		requireEventually(t, func() bool {
+			status, reason, ok := routeResolvedRefs(routeDenied.Name)
+			return ok && status == metav1.ConditionFalse && reason == string(gwapiv1.RouteReasonRefNotPermitted)
+		}, 10*time.Second, 100*time.Millisecond, "cross-namespace XBackend ref without a ReferenceGrant should report RefNotPermitted")
+
+		// Scenario B: a ReferenceGrant authorizes the cross-namespace ref. Created
+		// before the route so the first reconcile already sees the grant (the
+		// controller does not watch ReferenceGrant) -> ResolvedRefs=True.
+		nsGrant := &v1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "integ-xb-grant"}}
+		if err := k8sClient.Create(ctx, nsGrant); err != nil {
+			t.Fatalf("failed to create namespace: %v", err)
+		}
+		t.Cleanup(func() { k8sClient.Delete(ctx, nsGrant) })
+
+		xbGrant := makeXB(nsGrant.Name)
+		if err := k8sClient.Create(ctx, xbGrant); err != nil {
+			t.Fatalf("failed to create XBackend: %v", err)
+		}
+		t.Cleanup(func() { k8sClient.Delete(ctx, xbGrant) })
+
+		grant := &gwapiv1beta1.ReferenceGrant{
+			ObjectMeta: metav1.ObjectMeta{Name: "allow-xbackend", Namespace: nsGrant.Name},
+			Spec: gwapiv1beta1.ReferenceGrantSpec{
+				From: []gwapiv1beta1.ReferenceGrantFrom{{
+					Group:     "gateway.networking.k8s.io",
+					Kind:      "HTTPRoute",
+					Namespace: "default",
+				}},
+				To: []gwapiv1beta1.ReferenceGrantTo{{
+					Group: "gateway.networking.x-k8s.io",
+					Kind:  "XBackend",
+				}},
+			},
+		}
+		if err := k8sClient.Create(ctx, grant); err != nil {
+			t.Fatalf("failed to create ReferenceGrant: %v", err)
+		}
+		t.Cleanup(func() { k8sClient.Delete(ctx, grant) })
+
+		routeAllowed := makeXNSRoute("integ-route-xns-allowed", "allowed.example.com", nsGrant.Name)
+		if err := k8sClient.Create(ctx, routeAllowed); err != nil {
+			t.Fatalf("failed to create HTTPRoute: %v", err)
+		}
+		t.Cleanup(func() { k8sClient.Delete(ctx, routeAllowed) })
+
+		requireEventually(t, func() bool {
+			status, reason, ok := routeResolvedRefs(routeAllowed.Name)
+			return ok && status == metav1.ConditionTrue && reason == string(gwapiv1.RouteReasonResolvedRefs)
+		}, 10*time.Second, 100*time.Millisecond, "cross-namespace XBackend ref with a ReferenceGrant should report ResolvedRefs=True")
+	})
+
 	t.Run("Cleanup", func(t *testing.T) {
 		// Reset mock calls for this subtest
 		mock.mu.Lock()

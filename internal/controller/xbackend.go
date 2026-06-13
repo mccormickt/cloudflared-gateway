@@ -29,6 +29,7 @@ const (
 	reasonBackendNotFound     = "BackendNotFound"     // XBackend object does not exist
 	reasonRefNotPermitted     = "RefNotPermitted"     // cross-namespace ref without a ReferenceGrant
 	reasonUnsupportedProtocol = "UnsupportedProtocol" // a protocol/TLS mode cloudflared tunnels can't serve
+	reasonUnsupportedCACerts  = "UnsupportedCACerts"  // TLS validation pins custom caCertificateRefs we can't provision
 )
 
 // xbKey identifies an XBackend object.
@@ -252,6 +253,15 @@ func translateXBackend(xb *apisxv1alpha1.XBackend) (cfclient.ResolvedBackend, st
 		return cfclient.ResolvedBackend{}, reasonUnsupportedProtocol
 	}
 
+	usesTLS := xb.Spec.TLS != nil && xb.Spec.TLS.Mode != apisxv1alpha1.BackendTLSModeNone
+
+	// cloudflared's tcp:// proxy is an opaque byte stream: it cannot perform
+	// origin TLS verification, so a TCP backend that asks for TLS would be
+	// silently downgraded to a raw connection. Fail closed instead.
+	if proto == apisxv1alpha1.BackendProtocolTCP && usesTLS {
+		return cfclient.ResolvedBackend{}, reasonUnsupportedProtocol
+	}
+
 	origin := &cfclient.OriginRequest{}
 	switch proto {
 	case apisxv1alpha1.BackendProtocolHTTP2, apisxv1alpha1.BackendProtocolH2C, apisxv1alpha1.BackendProtocolGRPC:
@@ -259,7 +269,6 @@ func translateXBackend(xb *apisxv1alpha1.XBackend) (cfclient.ResolvedBackend, st
 		origin.HTTP2Origin = &t
 	}
 
-	usesTLS := xb.Spec.TLS != nil && xb.Spec.TLS.Mode != apisxv1alpha1.BackendTLSModeNone
 	scheme := "http"
 	switch {
 	case proto == apisxv1alpha1.BackendProtocolTCP:
@@ -275,6 +284,13 @@ func translateXBackend(xb *apisxv1alpha1.XBackend) (cfclient.ResolvedBackend, st
 			// remote-managed cloudflared tunnels cannot do.
 			return cfclient.ResolvedBackend{}, reasonUnsupportedProtocol
 		case apisxv1alpha1.BackendTLSModeServerOnly:
+			// A custom CA pin (caCertificateRefs) would have to be provisioned into
+			// the cloudflared Deployment and pointed at via originRequest.caPool,
+			// which isn't wired up — verifying against the system CAs instead would
+			// silently break a connection that pinned a private CA. Surface it.
+			if len(xb.Spec.TLS.Validation.CACertificateRefs) > 0 {
+				return cfclient.ResolvedBackend{}, reasonUnsupportedCACerts
+			}
 			// Verify the origin certificate (NoTLSVerify left unset) and use the
 			// validation hostname as the SNI server name when provided.
 			if h := string(xb.Spec.TLS.Validation.Hostname); h != "" {
@@ -304,12 +320,14 @@ func originRequestEmpty(o *cfclient.OriginRequest) bool {
 func reasonSeverity(reason string) int {
 	switch reason {
 	case reasonInvalidKind:
-		return 4
+		return 5
 	case reasonRefNotPermitted:
-		return 3
+		return 4
 	case reasonBackendNotFound:
-		return 2
+		return 3
 	case reasonUnsupportedProtocol:
+		return 2
+	case reasonUnsupportedCACerts:
 		return 1
 	default:
 		return 0

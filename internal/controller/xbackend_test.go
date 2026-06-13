@@ -30,6 +30,13 @@ func TestTranslateXBackend(t *testing.T) {
 	}
 	tlsNone := &apisxv1alpha1.BackendTLS{Mode: apisxv1alpha1.BackendTLSModeNone}
 	tlsMTLS := &apisxv1alpha1.BackendTLS{Mode: apisxv1alpha1.BackendTLSModeClientAndServer}
+	tlsCustomCA := &apisxv1alpha1.BackendTLS{
+		Mode: apisxv1alpha1.BackendTLSModeServerOnly,
+		Validation: gwapiv1.BackendTLSPolicyValidation{
+			Hostname:          "verify.example.com",
+			CACertificateRefs: []gwapiv1.LocalObjectReference{{Kind: "ConfigMap", Name: "private-ca"}},
+		},
+	}
 
 	tests := []struct {
 		name        string
@@ -75,6 +82,16 @@ func TestTranslateXBackend(t *testing.T) {
 			wantService: "tcp://tcp.example.com:5432",
 		},
 		{
+			name:        "tcp with tls none stays tcp",
+			xb:          makeXBackend("ns", "a", "tcp.example.com", 5432, protoPtr(apisxv1alpha1.BackendProtocolTCP), tlsNone),
+			wantService: "tcp://tcp.example.com:5432",
+		},
+		{
+			name:       "tcp with server-only tls unsupported",
+			xb:         makeXBackend("ns", "a", "tcp.example.com", 5432, protoPtr(apisxv1alpha1.BackendProtocolTCP), tlsServerOnly),
+			wantReason: reasonUnsupportedProtocol,
+		},
+		{
 			name:       "mcp unsupported",
 			xb:         makeXBackend("ns", "a", "api.example.com", 443, protoPtr(apisxv1alpha1.BackendProtocolMCP), nil),
 			wantReason: reasonUnsupportedProtocol,
@@ -83,6 +100,11 @@ func TestTranslateXBackend(t *testing.T) {
 			name:       "mtls unsupported",
 			xb:         makeXBackend("ns", "a", "api.example.com", 443, nil, tlsMTLS),
 			wantReason: reasonUnsupportedProtocol,
+		},
+		{
+			name:       "custom ca certs unsupported",
+			xb:         makeXBackend("ns", "a", "api.example.com", 443, nil, tlsCustomCA),
+			wantReason: reasonUnsupportedCACerts,
 		},
 	}
 
