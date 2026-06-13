@@ -186,17 +186,23 @@ This feature is **off by default**. Enable it with:
 - Helm: `--set experimental.backends.enabled=true`
 - Controller flag/env: `--enable-experimental-backends` / `ENABLE_EXPERIMENTAL_BACKENDS=true`
 
-When enabled, the controller requires the `XBackend` CRD (Gateway API **experimental** channel) and **fails fast at startup** if it — or any core Gateway API CRD — is missing. Install the CRDs out of band (`make install-crds` / `kubectl apply -f .../experimental-install.yaml`) or let the chart install them via the opt-in pre-install hook: `--set experimental.installGatewayAPICRDs=true` (pins `experimental.gatewayAPIVersion`, default the version this controller is built against).
+When enabled, the controller requires the `XBackend` CRD (Gateway API **experimental** channel) and **fails fast at startup** if it — or any core Gateway API CRD — is missing. Install the CRDs out of band (`make install-crds` / `kubectl apply -f .../experimental-install.yaml`) or let the chart install them via the opt-in pre-install hook: `--set experimental.installGatewayAPICRDs=true` (pins `experimental.gatewayAPIVersion`, default the version this controller is built against). Startup also inspects the installed bundle's channel/version annotations: with experimental backends enabled, a non-`experimental` channel or a bundle older than the version the controller was built against is a fatal error; otherwise such mismatches are logged as warnings.
 
 Mapping and limitations:
 
 | XBackend spec | Behavior |
 |---------------|----------|
-| `protocol` | `HTTP`/`HTTP11` → HTTP origin; `HTTP2`/`H2C`/`GRPC` → HTTP/2 origin; `TCP` → `tcp://` origin |
+| `protocol: HTTP`/`HTTP11` | HTTP origin |
+| `protocol: HTTP2`/`H2C`/`GRPC` | HTTP/2 origin |
+| `protocol: TCP` (with `tls.mode: None` or unset) | `tcp://` origin |
+| `protocol: TCP` + `tls.mode != None` | **Unsupported** (cloudflared's `tcp://` proxy cannot verify origin TLS) — route reports `ResolvedRefs=False` (`UnsupportedProtocol`) |
+| `protocol: MCP` | **Unsupported** — route reports `ResolvedRefs=False` (`UnsupportedProtocol`) |
 | `tls.mode: None` | Plain HTTP origin |
-| `tls.mode: ServerOnly` | HTTPS origin, certificate verified; `validation.hostname` becomes the SNI server name |
-| `tls.mode: ClientAndServer` | **Unsupported** (cloudflared cannot present an origin client certificate) — route reports `ResolvedRefs=False` |
-| `protocol: MCP` | **Unsupported** — route reports `ResolvedRefs=False` |
+| `tls.mode: ServerOnly` | HTTPS origin, server certificate verified against system CAs; `validation.hostname` becomes the SNI server name |
+| `tls.mode: ServerOnly` + `validation.caCertificateRefs` | **Unsupported** (a custom CA pool isn't provisioned into cloudflared; use `wellKnownCACertificates: System`) — route reports `ResolvedRefs=False` (`UnsupportedCACerts`) |
+| `tls.mode: ClientAndServer` | **Unsupported** (cloudflared cannot present an origin client certificate) — route reports `ResolvedRefs=False` (`UnsupportedProtocol`) |
+
+Each route rule uses only its first `backendRef` (`backendRefs[0]`); additional backends and `weight` are ignored, since a Cloudflare ingress rule maps to a single origin service. Weighted/multi-backend external origins are not supported.
 
 Cross-namespace `XBackend` references require a `ReferenceGrant` in the backend's namespace (`to.group: gateway.networking.x-k8s.io`, `to.kind: XBackend`); otherwise the route reports `ResolvedRefs=False` with reason `RefNotPermitted`. When the feature is disabled, a route referencing an `XBackend` reports `ResolvedRefs=False` (`InvalidKind`) and serves `http_status:503`. XBackends report GEP-713 ancestor status under `status.parents[]`.
 

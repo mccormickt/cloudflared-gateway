@@ -61,7 +61,7 @@ jobs:
         with:
           go-version-file: go.mod
       - run: make build
-      - name: Verify generated code is up to date
+      - name: Verify generated code and chart CRDs are up to date
         run: |
-          make manifests generate
+          make manifests generate chart-sync-crds
           git diff --exit-code

@@ -65,13 +65,18 @@ func xbAcceptedCondition(generation int64, reason string) metav1.Condition {
 			Message:            "Backend is accepted",
 		}
 	}
+	condReason, message := "UnsupportedProtocol", "Backend uses a protocol or TLS mode Cloudflare tunnels cannot serve"
+	if reason == reasonUnsupportedCACerts {
+		condReason = "UnsupportedCACerts"
+		message = "Backend pins custom caCertificateRefs, which are not supported; use wellKnownCACertificates: System"
+	}
 	return metav1.Condition{
 		Type:               "Accepted",
 		Status:             metav1.ConditionFalse,
 		ObservedGeneration: generation,
 		LastTransitionTime: metav1.Now(),
-		Reason:             "UnsupportedProtocol",
-		Message:            "Backend uses a protocol or TLS mode Cloudflare tunnels cannot serve",
+		Reason:             condReason,
+		Message:            message,
 	}
 }
 

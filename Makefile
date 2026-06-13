@@ -22,7 +22,7 @@ endif
 CONTROLLER_GEN := go tool controller-gen
 KO             ?= $(GOBIN)/ko
 
-.PHONY: build test test-unit test-integration test-e2e test-conformance test-all vet lint clean image setup-envtest install-crds manifests generate run fmt ko ko-build ko-push chart-package chart-push dev-release install-kind kind-up kind-down kind-load kind-install kind-dev help
+.PHONY: build test test-unit test-integration test-e2e test-conformance test-all vet lint clean image setup-envtest install-crds manifests generate chart-sync-crds run fmt ko ko-build ko-push chart-package chart-push dev-release install-kind kind-up kind-down kind-load kind-install kind-dev help
 
 build: ## Build the controller binary
 	go build -o bin/$(BINARY) ./cmd/
@@ -57,6 +57,9 @@ manifests: ## Generate CRD and RBAC manifests from markers
 
 generate: ## Generate deepcopy methods
 	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./..."
+
+chart-sync-crds: ## Copy config/crd CRDs into the Helm chart's crds/ with chart naming
+	./scripts/sync-chart-crds.sh
 
 fmt: ## Format Go source files
 	go fmt ./...
