@@ -105,6 +105,7 @@ type mockCloudflareClient struct {
 	calls          []mockCall
 	existingTunnel *cfclient.Tunnel
 	accountID      string
+	lastIngress    []cfclient.IngressRule
 }
 
 func newMockClient() *mockCloudflareClient {
@@ -158,8 +159,17 @@ func (m *mockCloudflareClient) DeleteTunnel(_ context.Context, id string) error 
 }
 
 func (m *mockCloudflareClient) UpdateTunnelConfiguration(_ context.Context, tunnelID string, ingress []cfclient.IngressRule) error {
+	m.mu.Lock()
+	m.lastIngress = append([]cfclient.IngressRule(nil), ingress...)
+	m.mu.Unlock()
 	m.record("UpdateTunnelConfiguration", tunnelID, len(ingress))
 	return nil
+}
+
+func (m *mockCloudflareClient) getLastIngress() []cfclient.IngressRule {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]cfclient.IngressRule(nil), m.lastIngress...)
 }
 
 // ---------------------------------------------------------------------------
@@ -594,6 +604,153 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 			}
 			return false
 		}, 10*time.Second, 100*time.Millisecond, "targeted route should report CloudflareOriginPolicyAffected")
+	})
+
+	t.Run("RuleOrderingAndPolicyAttachment", func(t *testing.T) {
+		gw := makeGateway("integ-gw-order", "default", gc.Name)
+		if err := k8sClient.Create(ctx, gw); err != nil {
+			t.Fatalf("failed to create Gateway: %v", err)
+		}
+		t.Cleanup(func() { k8sClient.Delete(ctx, gw) })
+
+		gwGroup := gwapiv1.Group(gwapiv1.GroupName)
+		gwKind := gwapiv1.Kind("Gateway")
+		port := gwapiv1.PortNumber(80)
+		exact := gwapiv1.PathMatchExact
+		prefix := gwapiv1.PathMatchPathPrefix
+		rootPath, apiHealth := "/", "/api/health"
+
+		// One rule, two matches declared least-specific-first: a match-all prefix
+		// then an exact path. After the precedence sort, the exact rule must come
+		// first so Cloudflare's first-match evaluation serves /api/health to it.
+		route := &gwapiv1.HTTPRoute{
+			ObjectMeta: metav1.ObjectMeta{Name: "integ-route-order", Namespace: "default"},
+			Spec: gwapiv1.HTTPRouteSpec{
+				CommonRouteSpec: gwapiv1.CommonRouteSpec{
+					ParentRefs: []gwapiv1.ParentReference{{Group: &gwGroup, Kind: &gwKind, Name: gwapiv1.ObjectName(gw.Name)}},
+				},
+				Hostnames: []gwapiv1.Hostname{"order.example.com"},
+				Rules: []gwapiv1.HTTPRouteRule{{
+					Matches: []gwapiv1.HTTPRouteMatch{
+						{Path: &gwapiv1.HTTPPathMatch{Type: &prefix, Value: &rootPath}},
+						{Path: &gwapiv1.HTTPPathMatch{Type: &exact, Value: &apiHealth}},
+					},
+					BackendRefs: []gwapiv1.HTTPBackendRef{{BackendRef: gwapiv1.BackendRef{
+						BackendObjectReference: gwapiv1.BackendObjectReference{Name: "web-svc", Port: &port},
+					}}},
+				}},
+			},
+		}
+		if err := k8sClient.Create(ctx, route); err != nil {
+			t.Fatalf("failed to create HTTPRoute: %v", err)
+		}
+		t.Cleanup(func() { k8sClient.Delete(ctx, route) })
+
+		socks := "socks"
+		policy := &cfv1alpha1.CloudflareOriginPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "integ-origin-order", Namespace: "default"},
+			Spec: cfv1alpha1.CloudflareOriginPolicySpec{
+				TargetRefs: []gwapiv1.LocalPolicyTargetReference{{
+					Group: gwapiv1.GroupName, Kind: "HTTPRoute", Name: gwapiv1.ObjectName(route.Name),
+				}},
+				ProxyType: &socks,
+			},
+		}
+		if err := k8sClient.Create(ctx, policy); err != nil {
+			t.Fatalf("failed to create CloudflareOriginPolicy: %v", err)
+		}
+		t.Cleanup(func() { k8sClient.Delete(ctx, policy) })
+
+		// Wait until the pushed config reflects this route's exact rule.
+		requireEventually(t, func() bool {
+			for _, r := range mock.getLastIngress() {
+				if r.Hostname == "order.example.com" && r.Path == "^/api/health$" {
+					return true
+				}
+			}
+			return false
+		}, 10*time.Second, 100*time.Millisecond, "config should include the exact /api/health rule")
+
+		ing := mock.getLastIngress()
+		exactIdx, matchAllIdx := -1, -1
+		for i, r := range ing {
+			if r.Hostname != "order.example.com" {
+				continue
+			}
+			switch r.Path {
+			case "^/api/health$":
+				exactIdx = i
+			case "":
+				matchAllIdx = i
+			}
+		}
+		if exactIdx == -1 || matchAllIdx == -1 {
+			t.Fatalf("expected both exact and match-all rules for the route, got %+v", ing)
+		}
+		if exactIdx > matchAllIdx {
+			t.Errorf("exact rule (idx %d) must precede match-all (idx %d) after precedence sort", exactIdx, matchAllIdx)
+		}
+
+		// Identity-based policy attachment must survive the sort: every rule of
+		// the route carries the origin policy's proxyType.
+		for _, r := range ing {
+			if r.Hostname != "order.example.com" {
+				continue
+			}
+			if r.OriginRequest == nil || r.OriginRequest.ProxyType == nil || *r.OriginRequest.ProxyType != "socks" {
+				t.Errorf("rule %q should carry origin policy proxyType=socks, got %+v", r.Path, r.OriginRequest)
+			}
+		}
+	})
+
+	t.Run("UnsupportedMatchCondition", func(t *testing.T) {
+		gw := makeGateway("integ-gw-unsupported", "default", gc.Name)
+		if err := k8sClient.Create(ctx, gw); err != nil {
+			t.Fatalf("failed to create Gateway: %v", err)
+		}
+		t.Cleanup(func() { k8sClient.Delete(ctx, gw) })
+
+		gwGroup := gwapiv1.Group(gwapiv1.GroupName)
+		gwKind := gwapiv1.Kind("Gateway")
+		port := gwapiv1.PortNumber(80)
+
+		// A header match is a dimension Cloudflare can't enforce.
+		route := &gwapiv1.HTTPRoute{
+			ObjectMeta: metav1.ObjectMeta{Name: "integ-route-unsupported", Namespace: "default"},
+			Spec: gwapiv1.HTTPRouteSpec{
+				CommonRouteSpec: gwapiv1.CommonRouteSpec{
+					ParentRefs: []gwapiv1.ParentReference{{Group: &gwGroup, Kind: &gwKind, Name: gwapiv1.ObjectName(gw.Name)}},
+				},
+				Hostnames: []gwapiv1.Hostname{"canary.example.com"},
+				Rules: []gwapiv1.HTTPRouteRule{{
+					Matches: []gwapiv1.HTTPRouteMatch{{
+						Headers: []gwapiv1.HTTPHeaderMatch{{Name: gwapiv1.HTTPHeaderName("X-Canary"), Value: "yes"}},
+					}},
+					BackendRefs: []gwapiv1.HTTPBackendRef{{BackendRef: gwapiv1.BackendRef{
+						BackendObjectReference: gwapiv1.BackendObjectReference{Name: "web-svc", Port: &port},
+					}}},
+				}},
+			},
+		}
+		if err := k8sClient.Create(ctx, route); err != nil {
+			t.Fatalf("failed to create HTTPRoute: %v", err)
+		}
+		t.Cleanup(func() { k8sClient.Delete(ctx, route) })
+
+		requireEventually(t, func() bool {
+			var rt gwapiv1.HTTPRoute
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: route.Name, Namespace: "default"}, &rt); err != nil {
+				return false
+			}
+			for _, p := range rt.Status.Parents {
+				for _, c := range p.Conditions {
+					if c.Type == string(gwapiv1.RouteConditionPartiallyInvalid) && c.Status == metav1.ConditionTrue {
+						return true
+					}
+				}
+			}
+			return false
+		}, 10*time.Second, 100*time.Millisecond, "route with a header match should report PartiallyInvalid")
 	})
 
 	t.Run("Cleanup", func(t *testing.T) {

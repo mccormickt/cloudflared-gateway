@@ -1154,7 +1154,7 @@ func TestApplyOriginPolicies_OnlyTargetedRoute(t *testing.T) {
 		makeOriginPolicy("p", "default", "HTTPRoute", "route-targeted",
 			cfv1alpha1.CloudflareOriginPolicySpec{ProxyType: ptr("socks")}),
 	}
-	rules = applyOriginPoliciesHTTP(policies, "gw", rules, routes)
+	applyOriginPolicies(policies, "gw", rules)
 
 	if rules[0].OriginRequest != nil {
 		t.Errorf("untargeted route should have nil originRequest, got %+v", rules[0].OriginRequest)
@@ -1175,7 +1175,7 @@ func TestApplyOriginPolicies_MultiHostname(t *testing.T) {
 		makeOriginPolicy("p", "default", "HTTPRoute", "multi-host",
 			cfv1alpha1.CloudflareOriginPolicySpec{DisableChunkedEncoding: ptr(true)}),
 	}
-	rules = applyOriginPoliciesHTTP(policies, "gw", rules, routes)
+	applyOriginPolicies(policies, "gw", rules)
 
 	for i, rule := range rules {
 		if rule.OriginRequest == nil || rule.OriginRequest.DisableChunkedEncoding == nil || !*rule.OriginRequest.DisableChunkedEncoding {
@@ -1199,7 +1199,7 @@ func TestApplyOriginPolicies_InheritedPrecedence(t *testing.T) {
 		makeOriginPolicy("route-override", "default", "HTTPRoute", "route",
 			cfv1alpha1.CloudflareOriginPolicySpec{NoHappyEyeballs: ptr(false)}),
 	}
-	rules = applyOriginPoliciesHTTP(policies, "gw", rules, routes)
+	applyOriginPolicies(policies, "gw", rules)
 
 	or := rules[0].OriginRequest
 	if or == nil {

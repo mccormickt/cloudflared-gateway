@@ -193,10 +193,14 @@ func TestApplyBackendTLSPolicies(t *testing.T) {
 	}}
 
 	noTLS := true
-	rules := []cfclient.IngressRule{{
-		Hostname:      "secure.example.com",
-		Service:       "https://tls-svc.default:8443",
-		OriginRequest: &cfclient.OriginRequest{NoTLSVerify: &noTLS},
+	rules := []cfclient.BuiltRule{{
+		IngressRule: cfclient.IngressRule{
+			Hostname:      "secure.example.com",
+			Service:       "https://tls-svc.default:8443",
+			OriginRequest: &cfclient.OriginRequest{NoTLSVerify: &noTLS},
+		},
+		RouteKind: "TLSRoute",
+		RouteName: "tls-route",
 	}}
 
 	result, err := r.applyBackendTLSPolicies(context.Background(), rules, tlsRoutes)
