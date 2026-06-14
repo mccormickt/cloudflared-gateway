@@ -4,26 +4,31 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.20.1
-  name: cloudflareaccesspolicies.cloudflare.jan0ski.net
+  name: cloudflareoriginpolicies.cloudflare.jan0ski.net
 spec:
   group: cloudflare.jan0ski.net
   names:
     categories:
     - cloudflare
-    kind: CloudflareAccessPolicy
-    listKind: CloudflareAccessPolicyList
-    plural: cloudflareaccesspolicies
-    singular: cloudflareaccesspolicy
+    kind: CloudflareOriginPolicy
+    listKind: CloudflareOriginPolicyList
+    plural: cloudflareoriginpolicies
+    singular: cloudflareoriginpolicy
   scope: Namespaced
   versions:
   - name: v1alpha1
     schema:
       openAPIV3Schema:
         description: |-
-          CloudflareAccessPolicy is a Direct Attached Policy (per GEP-713) that
-          configures Cloudflare Access JWT enforcement on targeted Gateway API resources.
-          It uses the Policy Attachment pattern with targetRefs to specify which
-          Gateway, HTTPRoute, or Service resources should have Access enforcement.
+          CloudflareOriginPolicy is an Inherited Policy (per GEP-713) that tunes the
+          originRequest settings cloudflared uses when connecting to backends. A policy
+          targeting a Gateway acts as a default for every route attached to it; a policy
+          targeting a route overrides the Gateway-level default for that route.
+
+          It replaces the former tunnels.cloudflare.com/* route annotations. Fields
+          owned by other mechanisms — Access (CloudflareAccessPolicy), origin TLS
+          (BackendTLSPolicy), httpHostHeader (HTTPRoute filters), connectTimeout
+          (HTTPRoute timeouts) — are intentionally not exposed here.
         properties:
           apiVersion:
             description: |-
@@ -44,22 +49,45 @@ spec:
             type: object
           spec:
             properties:
-              audTag:
-                description: AudTag is the audience tags to verify against Access
-                  JWT aud claim.
-                items:
-                  type: string
-                type: array
-              required:
-                description: Required enforces Access JWT validation on all requests.
+              disableChunkedEncoding:
+                description: DisableChunkedEncoding disables chunked transfer encoding
+                  to the origin.
                 type: boolean
+              http2Origin:
+                description: |-
+                  HTTP2Origin makes cloudflared connect to the origin over HTTP/2. GRPCRoutes
+                  always use HTTP/2 regardless of this setting.
+                type: boolean
+              keepAliveConnections:
+                description: |-
+                  KeepAliveConnections is the maximum number of idle keepalive connections
+                  to the origin.
+                format: int32
+                minimum: 0
+                type: integer
+              keepAliveTimeout:
+                description: KeepAliveTimeout is how long an idle keepalive connection
+                  is kept open.
+                type: string
+              matchSNIToHost:
+                description: MatchSNIToHost routes by matching the TLS SNI to the
+                  origin host.
+                type: boolean
+              noHappyEyeballs:
+                description: NoHappyEyeballs disables RFC 8305 Happy Eyeballs for
+                  IPv4/IPv6 fallback.
+                type: boolean
+              proxyType:
+                description: |-
+                  ProxyType selects the cloudflared proxy mode. Empty means a regular HTTP
+                  proxy; "socks" runs a SOCKS5 proxy.
+                enum:
+                - socks
+                type: string
               targetRefs:
                 description: |-
                   TargetRefs identifies the Gateway API resources this policy applies to.
-                  Supported kinds: Gateway, HTTPRoute, GRPCRoute, Service.
-
-                  When targeting a Gateway, all routes attached to it get Access enforcement.
-                  When targeting a route, only that route's ingress rules get Access enforcement.
+                  Supported kinds: Gateway, HTTPRoute, GRPCRoute, TLSRoute, TCPRoute.
                 items:
                   description: |-
                     LocalPolicyTargetReference identifies an API object to apply a direct or
@@ -97,13 +125,16 @@ spec:
                 - kind
                 - name
                 x-kubernetes-list-type: map
-              teamName:
-                description: TeamName is the Cloudflare organization team name for
-                  JWT validation.
+              tcpKeepAlive:
+                description: TCPKeepAlive is the interval between TCP keepalive packets
+                  to the origin.
+                type: string
+              tlsTimeout:
+                description: TLSTimeout is the timeout for completing a TLS handshake
+                  to the origin.
                 type: string
             required:
             - targetRefs
-            - teamName
             type: object
           status:
             description: |-

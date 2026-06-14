@@ -7,12 +7,21 @@ import (
 	gwapiv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 )
 
-// CheckReferenceGrant checks if a cross-namespace reference is permitted by a
-// ReferenceGrant in the target namespace.
+// CheckReferenceGrant checks if a cross-namespace reference to a resource in the
+// core API group (Service, Secret, …) is permitted by a ReferenceGrant in the
+// target namespace.
 //
 // Returns true if a ReferenceGrant exists in toNS that allows references from
 // fromNS/fromKind to toKind/toName.
 func CheckReferenceGrant(ctx context.Context, c client.Client, fromNS, fromKind, toNS, toKind, toName string) (bool, error) {
+	return CheckReferenceGrantTo(ctx, c, fromNS, fromKind, toNS, "", toKind, toName)
+}
+
+// CheckReferenceGrantTo is CheckReferenceGrant with an explicit target API
+// group, so references to extension resources (e.g. XBackend in
+// gateway.networking.x-k8s.io) can be authorized in addition to core resources.
+// An empty toGroup denotes the core API group.
+func CheckReferenceGrantTo(ctx context.Context, c client.Client, fromNS, fromKind, toNS, toGroup, toKind, toName string) (bool, error) {
 	var grantList gwapiv1beta1.ReferenceGrantList
 	if err := c.List(ctx, &grantList, client.InNamespace(toNS)); err != nil {
 		return false, err
@@ -22,7 +31,7 @@ func CheckReferenceGrant(ctx context.Context, c client.Client, fromNS, fromKind,
 		if !fromMatches(grant.Spec.From, fromNS, fromKind) {
 			continue
 		}
-		if toMatches(grant.Spec.To, toKind, toName) {
+		if toMatches(grant.Spec.To, toGroup, toKind, toName) {
 			return true, nil
 		}
 	}
@@ -41,15 +50,23 @@ func fromMatches(entries []gwapiv1beta1.ReferenceGrantFrom, fromNS, fromKind str
 	return false
 }
 
-func toMatches(entries []gwapiv1beta1.ReferenceGrantTo, toKind, toName string) bool {
+func toMatches(entries []gwapiv1beta1.ReferenceGrantTo, toGroup, toKind, toName string) bool {
 	for _, t := range entries {
-		// Empty group means core API group (Service, Secret, etc.)
-		groupOK := string(t.Group) == "" || string(t.Group) == "core"
 		kindOK := string(t.Kind) == toKind
 		nameOK := t.Name == nil || string(*t.Name) == toName
-		if groupOK && kindOK && nameOK {
+		if groupMatches(string(t.Group), toGroup) && kindOK && nameOK {
 			return true
 		}
 	}
 	return false
+}
+
+// groupMatches reports whether a ReferenceGrant "to" group matches the desired
+// group. An empty desired group denotes the core API group, for which the grant
+// may spell the group as "" or "core".
+func groupMatches(grantGroup, want string) bool {
+	if want == "" {
+		return grantGroup == "" || grantGroup == "core"
+	}
+	return grantGroup == want
 }

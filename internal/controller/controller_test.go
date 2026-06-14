@@ -788,6 +788,58 @@ func TestReferenceGrant_Denied(t *testing.T) {
 	}
 }
 
+func TestReferenceGrantTo_XBackendGroupAllowed(t *testing.T) {
+	scheme := testScheme()
+	grant := &gwapiv1beta1.ReferenceGrant{
+		ObjectMeta: metav1.ObjectMeta{Name: "allow-xbackend", Namespace: "backend"},
+		Spec: gwapiv1beta1.ReferenceGrantSpec{
+			From: []gwapiv1beta1.ReferenceGrantFrom{{
+				Group:     "gateway.networking.k8s.io",
+				Kind:      "HTTPRoute",
+				Namespace: "frontend",
+			}},
+			To: []gwapiv1beta1.ReferenceGrantTo{{
+				Group: "gateway.networking.x-k8s.io",
+				Kind:  "XBackend",
+			}},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(grant).Build()
+
+	allowed, err := CheckReferenceGrantTo(context.Background(), c, "frontend", "HTTPRoute", "backend", "gateway.networking.x-k8s.io", "XBackend", "ext")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !allowed {
+		t.Error("ReferenceGrant should allow cross-namespace XBackend reference")
+	}
+}
+
+func TestReferenceGrantTo_CoreGrantDoesNotAuthorizeXBackend(t *testing.T) {
+	scheme := testScheme()
+	// A core-group grant must not authorize an extension-group (XBackend) ref.
+	grant := &gwapiv1beta1.ReferenceGrant{
+		ObjectMeta: metav1.ObjectMeta{Name: "allow-core", Namespace: "backend"},
+		Spec: gwapiv1beta1.ReferenceGrantSpec{
+			From: []gwapiv1beta1.ReferenceGrantFrom{{
+				Group:     "gateway.networking.k8s.io",
+				Kind:      "HTTPRoute",
+				Namespace: "frontend",
+			}},
+			To: []gwapiv1beta1.ReferenceGrantTo{{Group: "", Kind: "XBackend"}},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(grant).Build()
+
+	allowed, err := CheckReferenceGrantTo(context.Background(), c, "frontend", "HTTPRoute", "backend", "gateway.networking.x-k8s.io", "XBackend", "ext")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allowed {
+		t.Error("a core-group grant must not authorize an XBackend reference")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Tests: BuildCloudflaredDeployment — Infrastructure propagation
 // ---------------------------------------------------------------------------
@@ -1145,7 +1197,7 @@ func TestApplyOriginPolicies_OnlyTargetedRoute(t *testing.T) {
 		httpRouteWithBackend("route-untargeted", "a.example.com"),
 		httpRouteWithBackend("route-targeted", "b.example.com"),
 	}
-	rules := cfclient.BuildIngressRules(routes)
+	rules := cfclient.BuildIngressRules(routes, cfclient.NilResolver)
 	if len(rules) != 2 {
 		t.Fatalf("expected 2 rules, got %d", len(rules))
 	}
@@ -1166,7 +1218,7 @@ func TestApplyOriginPolicies_OnlyTargetedRoute(t *testing.T) {
 
 func TestApplyOriginPolicies_MultiHostname(t *testing.T) {
 	routes := []gwapiv1.HTTPRoute{httpRouteWithBackend("multi-host", "a.example.com", "b.example.com")}
-	rules := cfclient.BuildIngressRules(routes)
+	rules := cfclient.BuildIngressRules(routes, cfclient.NilResolver)
 	if len(rules) != 2 {
 		t.Fatalf("expected 2 rules (one per hostname), got %d", len(rules))
 	}
@@ -1188,7 +1240,7 @@ func TestApplyOriginPolicies_MultiHostname(t *testing.T) {
 // policy overrides it for that route.
 func TestApplyOriginPolicies_InheritedPrecedence(t *testing.T) {
 	routes := []gwapiv1.HTTPRoute{httpRouteWithBackend("route", "a.example.com")}
-	rules := cfclient.BuildIngressRules(routes)
+	rules := cfclient.BuildIngressRules(routes, cfclient.NilResolver)
 
 	policies := []cfv1alpha1.CloudflareOriginPolicy{
 		makeOriginPolicy("gw-default", "default", "Gateway", "gw",
