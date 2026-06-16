@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"strings"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -27,6 +28,147 @@ func CheckRouteAttachment(ctx context.Context, c client.Client, gw *gwapiv1.Gate
 		}
 	}
 	return false, nil
+}
+
+// routeAttachmentHostnames returns the effective hostnames for a route after
+// applying parentRef listener selection, allowed route kinds and namespaces,
+// and listener hostname intersection. The boolean reports whether the route
+// attaches to at least one selected listener.
+func routeAttachmentHostnames(
+	ctx context.Context,
+	c client.Client,
+	gw *gwapiv1.Gateway,
+	parentRefs []gwapiv1.ParentReference,
+	routeNS, routeKind string,
+	hostnames []gwapiv1.Hostname,
+) ([]gwapiv1.Hostname, bool, error) {
+	seen := map[gwapiv1.Hostname]bool{}
+	var effective []gwapiv1.Hostname
+
+	for _, listener := range gw.Spec.Listeners {
+		if !parentRefsSelectListener(parentRefs, gw, listener) || !isKindAllowed(listener, routeKind) {
+			continue
+		}
+
+		allowed, err := isNamespaceAllowed(ctx, c, listener, gw.Namespace, routeNS)
+		if err != nil {
+			return nil, false, err
+		}
+		if !allowed {
+			continue
+		}
+
+		intersection, ok := intersectHostnames(hostnames, listener.Hostname)
+		if !ok {
+			continue
+		}
+		if len(intersection) == 0 {
+			return nil, true, nil
+		}
+		for _, hostname := range intersection {
+			if !seen[hostname] {
+				seen[hostname] = true
+				effective = append(effective, hostname)
+			}
+		}
+	}
+
+	return effective, len(effective) > 0, nil
+}
+
+func parentRefsSelectListener(parentRefs []gwapiv1.ParentReference, gw *gwapiv1.Gateway, listener gwapiv1.Listener) bool {
+	for _, ref := range parentRefs {
+		if !parentRefReferencesGateway(ref, gw) {
+			continue
+		}
+		if ref.SectionName != nil && *ref.SectionName != listener.Name {
+			continue
+		}
+		if ref.Port != nil && *ref.Port != listener.Port {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func parentRefReferencesGateway(ref gwapiv1.ParentReference, gw *gwapiv1.Gateway) bool {
+	group := gwapiv1.GroupName
+	if ref.Group != nil {
+		group = string(*ref.Group)
+	}
+	kind := "Gateway"
+	if ref.Kind != nil {
+		kind = string(*ref.Kind)
+	}
+	if group != gwapiv1.GroupName || kind != "Gateway" {
+		return false
+	}
+
+	namespace := gw.Namespace
+	if ref.Namespace != nil {
+		namespace = string(*ref.Namespace)
+	}
+	return string(ref.Name) == gw.Name && namespace == gw.Namespace
+}
+
+func intersectHostnames(routeHostnames []gwapiv1.Hostname, listenerHostname *gwapiv1.Hostname) ([]gwapiv1.Hostname, bool) {
+	if listenerHostname == nil {
+		return append([]gwapiv1.Hostname(nil), routeHostnames...), true
+	}
+	if len(routeHostnames) == 0 {
+		return []gwapiv1.Hostname{normalizeHostname(*listenerHostname)}, true
+	}
+
+	seen := map[gwapiv1.Hostname]bool{}
+	var intersection []gwapiv1.Hostname
+	for _, routeHostname := range routeHostnames {
+		hostname, ok := intersectHostname(routeHostname, *listenerHostname)
+		if ok && !seen[hostname] {
+			seen[hostname] = true
+			intersection = append(intersection, hostname)
+		}
+	}
+	return intersection, len(intersection) > 0
+}
+
+func intersectHostname(routeHostname, listenerHostname gwapiv1.Hostname) (gwapiv1.Hostname, bool) {
+	route := string(normalizeHostname(routeHostname))
+	listener := string(normalizeHostname(listenerHostname))
+	routeWildcard := strings.HasPrefix(route, "*.")
+	listenerWildcard := strings.HasPrefix(listener, "*.")
+
+	switch {
+	case !routeWildcard && !listenerWildcard:
+		return gwapiv1.Hostname(route), route == listener
+	case routeWildcard && !listenerWildcard:
+		return gwapiv1.Hostname(listener), wildcardMatches(route, listener)
+	case !routeWildcard && listenerWildcard:
+		return gwapiv1.Hostname(route), wildcardMatches(listener, route)
+	case route == listener:
+		return gwapiv1.Hostname(route), true
+	case wildcardMoreSpecific(route, listener):
+		return gwapiv1.Hostname(route), true
+	case wildcardMoreSpecific(listener, route):
+		return gwapiv1.Hostname(listener), true
+	default:
+		return "", false
+	}
+}
+
+func normalizeHostname(hostname gwapiv1.Hostname) gwapiv1.Hostname {
+	return gwapiv1.Hostname(strings.ToLower(strings.TrimSuffix(string(hostname), ".")))
+}
+
+func wildcardMatches(wildcard, hostname string) bool {
+	suffix := strings.TrimPrefix(wildcard, "*.")
+	return strings.HasSuffix(hostname, "."+suffix)
+}
+
+func wildcardMoreSpecific(hostname, other string) bool {
+	suffix := strings.TrimPrefix(hostname, "*.")
+	otherSuffix := strings.TrimPrefix(other, "*.")
+	return strings.HasSuffix(suffix, "."+otherSuffix)
 }
 
 func isKindAllowed(listener gwapiv1.Listener, routeKind string) bool {

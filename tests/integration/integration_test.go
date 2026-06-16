@@ -124,10 +124,19 @@ type mockCloudflareClient struct {
 	existingTunnel *cfclient.Tunnel
 	accountID      string
 	lastIngress    map[string][]cfclient.IngressRule
+	zones          []cfclient.Zone
+	dnsRecords     map[string][]cfclient.DNSRecord
+	nextRecordID   int
 }
 
 func newMockClient() *mockCloudflareClient {
 	return &mockCloudflareClient{accountID: "test-account", lastIngress: map[string][]cfclient.IngressRule{}}
+}
+
+func (m *mockCloudflareClient) dnsRecordsFor(zoneID string) []cfclient.DNSRecord {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]cfclient.DNSRecord(nil), m.dnsRecords[zoneID]...)
 }
 
 func (m *mockCloudflareClient) record(method string, args ...any) {
@@ -184,6 +193,52 @@ func (m *mockCloudflareClient) UpdateTunnelConfiguration(_ context.Context, tunn
 	return nil
 }
 
+func (m *mockCloudflareClient) ListZones(_ context.Context) ([]cfclient.Zone, error) {
+	m.record("ListZones")
+	return append([]cfclient.Zone(nil), m.zones...), nil
+}
+
+func (m *mockCloudflareClient) ListDNSRecords(_ context.Context, zoneID string) ([]cfclient.DNSRecord, error) {
+	m.record("ListDNSRecords", zoneID)
+	return m.dnsRecordsFor(zoneID), nil
+}
+
+func (m *mockCloudflareClient) ApplyDNSChanges(_ context.Context, zoneID string, changes cfclient.DNSChanges) error {
+	m.record("ApplyDNSChanges", zoneID)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.dnsRecords == nil {
+		m.dnsRecords = map[string][]cfclient.DNSRecord{}
+	}
+	del := map[string]bool{}
+	for _, d := range changes.Deletes {
+		del[d.ID] = true
+	}
+	upd := map[string]cfclient.DNSRecord{}
+	for _, u := range changes.Updates {
+		upd[u.ID] = u
+	}
+	recs := m.dnsRecords[zoneID]
+	kept := recs[:0:0]
+	for _, r := range recs {
+		if del[r.ID] {
+			continue
+		}
+		if u, ok := upd[r.ID]; ok {
+			kept = append(kept, u)
+		} else {
+			kept = append(kept, r)
+		}
+	}
+	for _, c := range changes.Creates {
+		m.nextRecordID++
+		c.ID = fmt.Sprintf("rec-%d", m.nextRecordID)
+		kept = append(kept, c)
+	}
+	m.dnsRecords[zoneID] = kept
+	return nil
+}
+
 func (m *mockCloudflareClient) getLastIngress(gatewayName string) []cfclient.IngressRule {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -211,6 +266,7 @@ func startManager(t *testing.T, mockCF cfclient.APIClient) {
 		CloudflareClient:     mockCF,
 		ControllerName:       gwapiv1.GatewayController(controller.ControllerName),
 		ExperimentalBackends: gatewayAPIChannel != "standard",
+		ManageDNS:            true,
 	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		t.Fatalf("failed to setup controller: %v", err)
@@ -527,6 +583,7 @@ func TestIntegration_NamespaceSelectorAttachment(t *testing.T) {
 func TestIntegration_ControllerLoop(t *testing.T) {
 	ctx := context.Background()
 	mock := newMockClient()
+	mock.zones = []cfclient.Zone{{ID: "zone-dns", Name: "dnsmgmt.test"}}
 	startManager(t, mock)
 
 	gc := makeGatewayClass("integ-gc-loop")
@@ -1451,6 +1508,55 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 		if controllerutil.ContainsFinalizer(&fetched, "cloudflared-gateway.jan0ski.net/cleanup") {
 			t.Error("finalizer should NOT be added to a gateway with a different controller")
 		}
+	})
+
+	t.Run("DNSManagement", func(t *testing.T) {
+		gw := makeGateway("integ-gw-dns", "default", gc.Name)
+		listenerHostname := gwapiv1.Hostname("*.dnsmgmt.test")
+		gw.Spec.Listeners[0].Hostname = &listenerHostname
+		if err := k8sClient.Create(ctx, gw); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { k8sClient.Delete(ctx, gw) })
+
+		route := makeHTTPRoute("integ-route-dns", "default", gw.Name)
+		route.Spec.Hostnames = []gwapiv1.Hostname{"app.dnsmgmt.test", "outside.example.com"}
+		if err := k8sClient.Create(ctx, route); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { k8sClient.Delete(ctx, route) })
+
+		requireEventually(t, func() bool {
+			records := mock.dnsRecordsFor("zone-dns")
+			return len(records) == 1 && records[0].Name == "app.dnsmgmt.test" &&
+				records[0].Content == "tunnel-integ-gw-dns.cfargotunnel.com" &&
+				records[0].Proxied && records[0].Comment == "cloudflared-gateway:owner="+string(gw.UID)
+		}, 10*time.Second, 100*time.Millisecond, "create an owned proxied CNAME for the listener-matched hostname")
+
+		// Reconciliation must not write its hostname intersection into the Route spec.
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(route), route); err != nil {
+			t.Fatal(err)
+		}
+		if len(route.Spec.Hostnames) != 2 {
+			t.Fatalf("route hostnames were changed: %v", route.Spec.Hostnames)
+		}
+		route.Spec.Hostnames = []gwapiv1.Hostname{"renamed.dnsmgmt.test"}
+		if err := k8sClient.Update(ctx, route); err != nil {
+			t.Fatal(err)
+		}
+		requireEventually(t, func() bool {
+			records := mock.dnsRecordsFor("zone-dns")
+			return len(records) == 1 && records[0].Name == "renamed.dnsmgmt.test"
+		}, 10*time.Second, 100*time.Millisecond, "replace the stale owned hostname on route update")
+
+		if err := k8sClient.Delete(ctx, gw); err != nil {
+			t.Fatal(err)
+		}
+		requireEventually(t, func() bool {
+			var fetched gwapiv1.Gateway
+			return len(mock.dnsRecordsFor("zone-dns")) == 0 &&
+				apierrors.IsNotFound(k8sClient.Get(ctx, client.ObjectKeyFromObject(gw), &fetched))
+		}, 10*time.Second, 100*time.Millisecond, "delete owned DNS before removing the Gateway finalizer")
 	})
 }
 

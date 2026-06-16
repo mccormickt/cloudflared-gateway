@@ -88,6 +88,7 @@ kubectl -n cloudflared-gateway create secret generic cloudflare-creds \
 | `podAnnotations` | object | `{}` | Annotations added to the controller pod. |
 | `podLabels` | object | `{}` | Additional labels added to the controller pod. |
 | `extraEnv` | list | `[]` | Extra environment variables merged into the `manager` container after the Cloudflare credential vars. |
+| `dns.enabled` | bool | `false` | Manage proxied CNAME records for attached route hostnames. Requires `Zone:Read` and `Zone:DNS:Edit`. Keep disabled when ExternalDNS manages these hostnames. See [DNS management](../../README.md#dns-management). |
 | `experimental.backends.enabled` | bool | `false` | Enable XBackend support. Requires a served `gateway.networking.x-k8s.io/v1alpha1` CRD from a GA v1.6.x bundle. |
 | `experimental.installGatewayAPICRDs` | bool | `false` | Install standard Gateway API CRDs, plus XBackend if enabled. Requires Kubernetes >=1.30 and egress to GitHub (see below). Keep disabled for existing shared, manually installed, or experimental bundles. |
 | `experimental.gatewayAPIVersion` | string | `v1.6.3` | Release installed by the hook. Validated only when the hook is enabled: must be a GA v1 release >=v1.6.0, and a GA v1.6.x release when installing XBackend. |

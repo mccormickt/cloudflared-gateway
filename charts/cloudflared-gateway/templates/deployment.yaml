@@ -54,6 +54,10 @@ spec:
             - name: ENABLE_EXPERIMENTAL_BACKENDS
               value: "true"
             {{- end }}
+            {{- if .Values.dns.enabled }}
+            - name: ENABLE_DNS_MANAGEMENT
+              value: "true"
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
