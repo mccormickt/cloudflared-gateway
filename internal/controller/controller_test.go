@@ -40,10 +40,48 @@ type mockCloudflareClient struct {
 	createErr      error
 	deleteErr      error
 	configErr      error
+
+	// DNS state. zones drives hostname→zone matching; dnsRecords is an in-memory
+	// per-zone record store that ApplyDNSChanges mutates, so tests can assert the
+	// converged record set and teardown. Error fields force failures.
+	zones          []cfclient.Zone
+	dnsRecords     map[string][]cfclient.DNSRecord
+	zonesErr       error
+	listRecordsErr error
+	applyErr       error
+	nextRecordID   int
 }
 
 func newMockClient() *mockCloudflareClient {
 	return &mockCloudflareClient{accountID: "test-account"}
+}
+
+// withZones seeds the account's zones for hostname matching.
+func (m *mockCloudflareClient) withZones(zones ...cfclient.Zone) *mockCloudflareClient {
+	m.zones = zones
+	return m
+}
+
+// seedDNSRecord inserts a pre-existing record into a zone's store (e.g. an
+// unowned record the controller must not touch).
+func (m *mockCloudflareClient) seedDNSRecord(zoneID string, rec cfclient.DNSRecord) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.dnsRecords == nil {
+		m.dnsRecords = map[string][]cfclient.DNSRecord{}
+	}
+	if rec.ID == "" {
+		m.nextRecordID++
+		rec.ID = fmt.Sprintf("seed-%d", m.nextRecordID)
+	}
+	m.dnsRecords[zoneID] = append(m.dnsRecords[zoneID], rec)
+}
+
+// dnsRecordsFor returns a copy of a zone's current records.
+func (m *mockCloudflareClient) dnsRecordsFor(zoneID string) []cfclient.DNSRecord {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]cfclient.DNSRecord(nil), m.dnsRecords[zoneID]...)
 }
 
 func (m *mockCloudflareClient) withExistingTunnel(id, name string) *mockCloudflareClient {
@@ -91,6 +129,64 @@ func (m *mockCloudflareClient) DeleteTunnel(ctx context.Context, id string) erro
 func (m *mockCloudflareClient) UpdateTunnelConfiguration(ctx context.Context, tunnelID string, ingress []cfclient.IngressRule) error {
 	m.record("UpdateTunnelConfiguration", tunnelID, len(ingress))
 	return m.configErr
+}
+
+func (m *mockCloudflareClient) ListZones(ctx context.Context) ([]cfclient.Zone, error) {
+	m.record("ListZones")
+	if m.zonesErr != nil {
+		return nil, m.zonesErr
+	}
+	return append([]cfclient.Zone(nil), m.zones...), nil
+}
+
+func (m *mockCloudflareClient) ListDNSRecords(ctx context.Context, zoneID string) ([]cfclient.DNSRecord, error) {
+	m.record("ListDNSRecords", zoneID)
+	if m.listRecordsErr != nil {
+		return nil, m.listRecordsErr
+	}
+	return m.dnsRecordsFor(zoneID), nil
+}
+
+func (m *mockCloudflareClient) ApplyDNSChanges(ctx context.Context, zoneID string, changes cfclient.DNSChanges) error {
+	m.record("ApplyDNSChanges", zoneID, len(changes.Creates), len(changes.Updates), len(changes.Deletes))
+	if m.applyErr != nil {
+		return m.applyErr
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.dnsRecords == nil {
+		m.dnsRecords = map[string][]cfclient.DNSRecord{}
+	}
+	recs := m.dnsRecords[zoneID]
+	// Deletes and updates by ID.
+	del := map[string]bool{}
+	for _, d := range changes.Deletes {
+		del[d.ID] = true
+	}
+	upd := map[string]cfclient.DNSRecord{}
+	for _, u := range changes.Updates {
+		upd[u.ID] = u
+	}
+	kept := recs[:0:0]
+	for _, r := range recs {
+		if del[r.ID] {
+			continue
+		}
+		if u, ok := upd[r.ID]; ok {
+			u.ID = r.ID
+			kept = append(kept, u)
+			continue
+		}
+		kept = append(kept, r)
+	}
+	// Creates get fresh IDs.
+	for _, c := range changes.Creates {
+		m.nextRecordID++
+		c.ID = fmt.Sprintf("rec-%d", m.nextRecordID)
+		kept = append(kept, c)
+	}
+	m.dnsRecords[zoneID] = kept
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -523,6 +619,83 @@ func TestRouteAttachment_ProtocolMismatch(t *testing.T) {
 	}
 }
 
+func TestRouteAttachmentHostnames_UsesSelectedListenerIntersection(t *testing.T) {
+	scheme := testScheme()
+	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	gw := makeGateway("gw", "default")
+	publicHostname := gwapiv1.Hostname("*.example.com")
+	privateHostname := gwapiv1.Hostname("private.other.net")
+	gw.Spec.Listeners = []gwapiv1.Listener{
+		{Name: "public", Port: 80, Protocol: gwapiv1.HTTPProtocolType, Hostname: &publicHostname},
+		{Name: "private", Port: 8080, Protocol: gwapiv1.HTTPProtocolType, Hostname: &privateHostname},
+	}
+	sectionName := gwapiv1.SectionName("public")
+	parentRefs := []gwapiv1.ParentReference{{
+		Name:        "gw",
+		SectionName: &sectionName,
+	}}
+	hostnames := []gwapiv1.Hostname{"app.example.com", "private.other.net", "unrelated.test"}
+
+	got, attached, err := routeAttachmentHostnames(
+		context.Background(), c, gw, parentRefs, "default", "HTTPRoute", hostnames,
+	)
+	if err != nil {
+		t.Fatalf("routeAttachmentHostnames() error = %v", err)
+	}
+	if !attached {
+		t.Fatal("routeAttachmentHostnames() attached = false, want true")
+	}
+	want := []gwapiv1.Hostname{"app.example.com"}
+	if len(got) != len(want) || got[0] != want[0] {
+		t.Errorf("routeAttachmentHostnames() = %v, want %v", got, want)
+	}
+}
+
+func TestIntersectHostnames_NarrowsToListener(t *testing.T) {
+	tests := []struct {
+		name     string
+		route    []gwapiv1.Hostname
+		listener gwapiv1.Hostname
+		want     []gwapiv1.Hostname
+	}{
+		{
+			name:     "empty route uses listener hostname",
+			listener: "app.example.com",
+			want:     []gwapiv1.Hostname{"app.example.com"},
+		},
+		{
+			name:     "route wildcard narrows to exact listener",
+			route:    []gwapiv1.Hostname{"*.example.com"},
+			listener: "app.example.com",
+			want:     []gwapiv1.Hostname{"app.example.com"},
+		},
+		{
+			name:     "listener wildcard keeps exact route",
+			route:    []gwapiv1.Hostname{"app.example.com", "app.other.net"},
+			listener: "*.example.com",
+			want:     []gwapiv1.Hostname{"app.example.com"},
+		},
+		{
+			name:     "overlapping wildcards use more specific hostname",
+			route:    []gwapiv1.Hostname{"*.internal.example.com"},
+			listener: "*.example.com",
+			want:     []gwapiv1.Hostname{"*.internal.example.com"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := intersectHostnames(tt.route, &tt.listener)
+			if !ok {
+				t.Fatalf("intersectHostnames(%v, %q) matched = false, want true", tt.route, tt.listener)
+			}
+			if len(got) != len(tt.want) || got[0] != tt.want[0] {
+				t.Errorf("intersectHostnames(%v, %q) = %v, want %v", tt.route, tt.listener, got, tt.want)
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Tests: Error types and policy
 // ---------------------------------------------------------------------------
@@ -785,58 +958,6 @@ func TestReferenceGrant_Denied(t *testing.T) {
 	}
 	if allowed {
 		t.Error("ReferenceGrant should deny when source namespace doesn't match")
-	}
-}
-
-func TestReferenceGrantTo_XBackendGroupAllowed(t *testing.T) {
-	scheme := testScheme()
-	grant := &gwapiv1beta1.ReferenceGrant{
-		ObjectMeta: metav1.ObjectMeta{Name: "allow-xbackend", Namespace: "backend"},
-		Spec: gwapiv1beta1.ReferenceGrantSpec{
-			From: []gwapiv1beta1.ReferenceGrantFrom{{
-				Group:     "gateway.networking.k8s.io",
-				Kind:      "HTTPRoute",
-				Namespace: "frontend",
-			}},
-			To: []gwapiv1beta1.ReferenceGrantTo{{
-				Group: "gateway.networking.x-k8s.io",
-				Kind:  "XBackend",
-			}},
-		},
-	}
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(grant).Build()
-
-	allowed, err := CheckReferenceGrantTo(context.Background(), c, "frontend", "HTTPRoute", "backend", "gateway.networking.x-k8s.io", "XBackend", "ext")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !allowed {
-		t.Error("ReferenceGrant should allow cross-namespace XBackend reference")
-	}
-}
-
-func TestReferenceGrantTo_CoreGrantDoesNotAuthorizeXBackend(t *testing.T) {
-	scheme := testScheme()
-	// A core-group grant must not authorize an extension-group (XBackend) ref.
-	grant := &gwapiv1beta1.ReferenceGrant{
-		ObjectMeta: metav1.ObjectMeta{Name: "allow-core", Namespace: "backend"},
-		Spec: gwapiv1beta1.ReferenceGrantSpec{
-			From: []gwapiv1beta1.ReferenceGrantFrom{{
-				Group:     "gateway.networking.k8s.io",
-				Kind:      "HTTPRoute",
-				Namespace: "frontend",
-			}},
-			To: []gwapiv1beta1.ReferenceGrantTo{{Group: "", Kind: "XBackend"}},
-		},
-	}
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(grant).Build()
-
-	allowed, err := CheckReferenceGrantTo(context.Background(), c, "frontend", "HTTPRoute", "backend", "gateway.networking.x-k8s.io", "XBackend", "ext")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if allowed {
-		t.Error("a core-group grant must not authorize an XBackend reference")
 	}
 }
 

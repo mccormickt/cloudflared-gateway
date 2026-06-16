@@ -20,6 +20,7 @@ import (
 
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;create;update;delete
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list
+// +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;create;update;delete
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways,verbs=get;list;watch;update
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways/status,verbs=get;update;patch
@@ -262,6 +263,15 @@ func (r *GatewayReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *
 	}
 	logger.Info("Pushed tunnel config", "rules", len(ingress))
 
+	// Ensure DNS records (proxied CNAME → tunnel) for served hostnames. Runs
+	// after the tunnel config is pushed so traffic plumbing is never blocked by
+	// DNS; any failure is folded into the final error so the Gateway requeues.
+	// No-op unless DNS management is enabled.
+	dnsErr := r.reconcileDNS(ctx, gw, tunnel.ID, collectRouteHostnames(httpRoutes, grpcRoutes, tlsRoutes))
+	if dnsErr != nil {
+		logger.Error(dnsErr, "Failed to reconcile DNS records")
+	}
+
 	// Patch policy ancestor status first so we know which targets are affected
 	// (used to set the PolicyAffected condition on Gateways and routes).
 	var statusErr error
@@ -332,7 +342,7 @@ func (r *GatewayReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *
 
 	// Compute listener route counts and set Gateway status
 	listenerCounts := computeListenerCounts(gw, httpRoutes, grpcRoutes, tlsRoutes, tcpRoutes)
-	if err := PatchGatewayStatus(ctx, r.Client, gw, tunnel.ID, listenerCounts); err != nil {
+	if err := PatchGatewayStatus(ctx, r.Client, gw, tunnel.ID, listenerCounts, dnsErr); err != nil {
 		logger.Error(err, "Failed to patch Gateway status")
 		if statusErr == nil {
 			statusErr = err
@@ -341,6 +351,9 @@ func (r *GatewayReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *
 
 	if statusErr != nil {
 		return KubeError(statusErr)
+	}
+	if dnsErr != nil {
+		return CloudflareError(dnsErr)
 	}
 
 	return nil
@@ -403,6 +416,16 @@ func (r *GatewayReconciler) cleanup(ctx context.Context, gw *gwapiv1.Gateway) er
 		}
 	}
 
+	// Delete DNS records this Gateway owns (no-op unless DNS management is on).
+	// Keep the finalizer while teardown fails: ownership includes the Gateway UID,
+	// so a recreated Gateway cannot adopt records orphaned by finalizer removal.
+	if err := r.teardownDNS(ctx, gw); err != nil {
+		logger.Error(err, "Cleanup: failed to delete DNS records")
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+
 	// Prune this Gateway from policy ancestor status (best-effort; does not block
 	// finalizer removal).
 	r.prunePolicyAncestorStatus(ctx, gw)
@@ -440,16 +463,16 @@ func (r *GatewayReconciler) collectHTTPRoutes(ctx context.Context, gw *gwapiv1.G
 
 	var attached []gwapiv1.HTTPRoute
 	for _, route := range routeList.Items {
-		if !routeReferencesGateway(route.Spec.ParentRefs, gw) {
-			continue
-		}
-		allowed, err := CheckRouteAttachment(ctx, r.Client, gw, route.Namespace, "HTTPRoute")
+		hostnames, allowed, err := routeAttachmentHostnames(
+			ctx, r.Client, gw, route.Spec.ParentRefs, route.Namespace, "HTTPRoute", route.Spec.Hostnames,
+		)
 		if err != nil {
 			return nil, err
 		}
 		if !allowed {
 			continue
 		}
+		route.Spec.Hostnames = hostnames
 		attached = append(attached, route)
 	}
 	return attached, nil
@@ -466,45 +489,19 @@ func (r *GatewayReconciler) collectTLSRoutes(ctx context.Context, gw *gwapiv1.Ga
 
 	var attached []gwapiv1alpha2.TLSRoute
 	for _, route := range routeList.Items {
-		if !routeReferencesGateway(route.Spec.ParentRefs, gw) {
-			continue
-		}
-		allowed, err := CheckRouteAttachment(ctx, r.Client, gw, route.Namespace, "TLSRoute")
+		hostnames, allowed, err := routeAttachmentHostnames(
+			ctx, r.Client, gw, route.Spec.ParentRefs, route.Namespace, "TLSRoute", route.Spec.Hostnames,
+		)
 		if err != nil {
 			return nil, err
 		}
 		if !allowed {
 			continue
 		}
+		route.Spec.Hostnames = hostnames
 		attached = append(attached, route)
 	}
 	return attached, nil
-}
-
-func routeReferencesGateway(parentRefs []gwapiv1.ParentReference, gw *gwapiv1.Gateway) bool {
-	for _, ref := range parentRefs {
-		group := gwapiv1.GroupName
-		if ref.Group != nil {
-			group = string(*ref.Group)
-		}
-		kind := "Gateway"
-		if ref.Kind != nil {
-			kind = string(*ref.Kind)
-		}
-		if group != gwapiv1.GroupName || kind != "Gateway" {
-			continue
-		}
-
-		ns := gw.Namespace
-		if ref.Namespace != nil {
-			ns = string(*ref.Namespace)
-		}
-
-		if string(ref.Name) == gw.Name && ns == gw.Namespace {
-			return true
-		}
-	}
-	return false
 }
 
 func (r *GatewayReconciler) collectGRPCRoutes(ctx context.Context, gw *gwapiv1.Gateway) ([]gwapiv1.GRPCRoute, error) {
@@ -518,16 +515,16 @@ func (r *GatewayReconciler) collectGRPCRoutes(ctx context.Context, gw *gwapiv1.G
 
 	var attached []gwapiv1.GRPCRoute
 	for _, route := range routeList.Items {
-		if !routeReferencesGateway(route.Spec.ParentRefs, gw) {
-			continue
-		}
-		allowed, err := CheckRouteAttachment(ctx, r.Client, gw, route.Namespace, "GRPCRoute")
+		hostnames, allowed, err := routeAttachmentHostnames(
+			ctx, r.Client, gw, route.Spec.ParentRefs, route.Namespace, "GRPCRoute", route.Spec.Hostnames,
+		)
 		if err != nil {
 			return nil, err
 		}
 		if !allowed {
 			continue
 		}
+		route.Spec.Hostnames = hostnames
 		attached = append(attached, route)
 	}
 	return attached, nil
@@ -544,10 +541,9 @@ func (r *GatewayReconciler) collectTCPRoutes(ctx context.Context, gw *gwapiv1.Ga
 
 	var attached []gwapiv1alpha2.TCPRoute
 	for _, route := range routeList.Items {
-		if !routeReferencesGateway(route.Spec.ParentRefs, gw) {
-			continue
-		}
-		allowed, err := CheckRouteAttachment(ctx, r.Client, gw, route.Namespace, "TCPRoute")
+		_, allowed, err := routeAttachmentHostnames(
+			ctx, r.Client, gw, route.Spec.ParentRefs, route.Namespace, "TCPRoute", nil,
+		)
 		if err != nil {
 			return nil, err
 		}

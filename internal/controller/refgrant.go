@@ -14,14 +14,6 @@ import (
 // Returns true if a ReferenceGrant exists in toNS that allows references from
 // fromNS/fromKind to toKind/toName.
 func CheckReferenceGrant(ctx context.Context, c client.Client, fromNS, fromKind, toNS, toKind, toName string) (bool, error) {
-	return CheckReferenceGrantTo(ctx, c, fromNS, fromKind, toNS, "", toKind, toName)
-}
-
-// CheckReferenceGrantTo is CheckReferenceGrant with an explicit target API
-// group, so references to extension resources (e.g. XBackend in
-// gateway.networking.x-k8s.io) can be authorized in addition to core resources.
-// An empty toGroup denotes the core API group.
-func CheckReferenceGrantTo(ctx context.Context, c client.Client, fromNS, fromKind, toNS, toGroup, toKind, toName string) (bool, error) {
 	var grantList gwapiv1beta1.ReferenceGrantList
 	if err := c.List(ctx, &grantList, client.InNamespace(toNS)); err != nil {
 		return false, err
@@ -31,7 +23,7 @@ func CheckReferenceGrantTo(ctx context.Context, c client.Client, fromNS, fromKin
 		if !fromMatches(grant.Spec.From, fromNS, fromKind) {
 			continue
 		}
-		if toMatches(grant.Spec.To, toGroup, toKind, toName) {
+		if toMatches(grant.Spec.To, toKind, toName) {
 			return true, nil
 		}
 	}
@@ -50,23 +42,15 @@ func fromMatches(entries []gwapiv1beta1.ReferenceGrantFrom, fromNS, fromKind str
 	return false
 }
 
-func toMatches(entries []gwapiv1beta1.ReferenceGrantTo, toGroup, toKind, toName string) bool {
+func toMatches(entries []gwapiv1beta1.ReferenceGrantTo, toKind, toName string) bool {
 	for _, t := range entries {
+		group := string(t.Group)
+		groupOK := group == "" || group == "core"
 		kindOK := string(t.Kind) == toKind
 		nameOK := t.Name == nil || string(*t.Name) == toName
-		if groupMatches(string(t.Group), toGroup) && kindOK && nameOK {
+		if groupOK && kindOK && nameOK {
 			return true
 		}
 	}
 	return false
-}
-
-// groupMatches reports whether a ReferenceGrant "to" group matches the desired
-// group. An empty desired group denotes the core API group, for which the grant
-// may spell the group as "" or "core".
-func groupMatches(grantGroup, want string) bool {
-	if want == "" {
-		return grantGroup == "" || grantGroup == "core"
-	}
-	return grantGroup == want
 }

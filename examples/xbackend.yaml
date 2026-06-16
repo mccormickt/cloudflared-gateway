@@ -17,9 +17,10 @@ spec:
     port: 443
   externalHostname:
     hostname: api.openai.com
-  # protocol defaults to HTTP; TLS mode ServerOnly makes the tunnel connect over
-  # HTTPS and verify the origin certificate. Supported: TCP, HTTP, HTTP2, H2C,
-  # HTTP11, GRPC (MCP and mutual-TLS ClientAndServer are not supported).
+  # protocol defaults from the referencing Route (HTTP for this HTTPRoute). TLS
+  # mode ServerOnly makes the tunnel connect over HTTPS and verify the origin
+  # certificate. Supported: TCP, HTTP, HTTP2, H2C, HTTP11, GRPC (MCP and
+  # mutual-TLS ClientAndServer are not supported).
   tls:
     mode: ServerOnly
     validation:

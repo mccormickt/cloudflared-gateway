@@ -38,6 +38,14 @@ type GatewayReconciler struct {
 	// are rejected (ResolvedRefs=False, InvalidKind) and no XBackend watch or
 	// API access occurs.
 	ExperimentalBackends bool
+
+	// ManageDNS enables creation of proxied CNAME records (hostname →
+	// <tunnelID>.cfargotunnel.com) for every attached route hostname, so traffic
+	// reaches the tunnel without a manual DNS step. When false, no Cloudflare DNS
+	// API access occurs and users manage DNS themselves. Records are tagged with
+	// an owner comment so only records this controller created are ever updated
+	// or removed. Requires the API token to also carry Zone:Read + DNS:Edit.
+	ManageDNS bool
 }
 
 var _ reconcile.Reconciler = &GatewayReconciler{}

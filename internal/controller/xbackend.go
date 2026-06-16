@@ -27,7 +27,7 @@ const (
 	reasonResolvedOK          = ""
 	reasonInvalidKind         = "InvalidKind"         // XBackend ref but experimental support is disabled
 	reasonBackendNotFound     = "BackendNotFound"     // XBackend object does not exist
-	reasonRefNotPermitted     = "RefNotPermitted"     // cross-namespace ref without a ReferenceGrant
+	reasonRefNotPermitted     = "RefNotPermitted"     // XBackends must be in the referencing Route's namespace
 	reasonUnsupportedProtocol = "UnsupportedProtocol" // a protocol/TLS mode cloudflared tunnels can't serve
 	reasonUnsupportedCACerts  = "UnsupportedCACerts"  // TLS validation pins custom caCertificateRefs we can't provision
 )
@@ -38,23 +38,12 @@ type xbKey struct {
 	name      string
 }
 
-// permitKey identifies a single cross-namespace authorization: a route of a
-// given kind in routeNS referencing an XBackend in a different namespace.
-type permitKey struct {
-	routeNS   string
-	routeKind string
-	xbNS      string
-	name      string
-}
-
 // xbBackends is the per-reconcile resolution context for XBackend refs: the
-// fetched objects, cross-namespace grant outcomes, and the set of XBackends
-// referenced by attached routes (for status). It is nil when experimental
-// backend support is disabled.
+// fetched objects and the route kinds that reference each XBackend (for status).
+// It is nil when experimental backend support is disabled.
 type xbBackends struct {
 	fetched    map[xbKey]*apisxv1alpha1.XBackend
-	permitted  map[permitKey]bool
-	referenced map[xbKey]bool
+	referenced map[xbKey]map[string]bool
 }
 
 // xbRefTarget is a single XBackend backendRef discovered on an attached route.
@@ -138,10 +127,9 @@ func tcpRouteObjRefs(route *gwapiv1alpha2.TCPRoute) []gwapiv1.BackendObjectRefer
 	return out
 }
 
-// collectReferencedXBackends discovers every XBackend referenced by an attached
-// route, authorizes cross-namespace references via ReferenceGrant, and fetches
-// the permitted objects. The returned context is consumed by the resolver and
-// by route/XBackend status patching.
+// collectReferencedXBackends discovers every same-namespace XBackend referenced
+// by an attached route and fetches it. The returned context is consumed by the
+// resolver and by route/XBackend status patching.
 func (r *GatewayReconciler) collectReferencedXBackends(
 	ctx context.Context,
 	http []gwapiv1.HTTPRoute,
@@ -151,8 +139,7 @@ func (r *GatewayReconciler) collectReferencedXBackends(
 ) (*xbBackends, error) {
 	col := &xbBackends{
 		fetched:    map[xbKey]*apisxv1alpha1.XBackend{},
-		permitted:  map[permitKey]bool{},
-		referenced: map[xbKey]bool{},
+		referenced: map[xbKey]map[string]bool{},
 	}
 
 	targets := make([]xbRefTarget, 0, len(http)+len(grpc)+len(tls)+len(tcp))
@@ -170,22 +157,14 @@ func (r *GatewayReconciler) collectReferencedXBackends(
 	}
 
 	for _, t := range targets {
-		key := xbKey{t.xbNS, t.name}
-		col.referenced[key] = true
-
 		if t.routeNS != t.xbNS {
-			pk := permitKey(t)
-			if _, done := col.permitted[pk]; !done {
-				ok, err := CheckReferenceGrantTo(ctx, r.Client, t.routeNS, t.routeKind, t.xbNS, xBackendGroup, xBackendKind, t.name)
-				if err != nil {
-					return nil, err
-				}
-				col.permitted[pk] = ok
-			}
-			if !col.permitted[pk] {
-				continue
-			}
+			continue
 		}
+		key := xbKey{t.xbNS, t.name}
+		if col.referenced[key] == nil {
+			col.referenced[key] = map[string]bool{}
+		}
+		col.referenced[key][t.routeKind] = true
 
 		if _, done := col.fetched[key]; done {
 			continue
@@ -210,14 +189,14 @@ func (r *GatewayReconciler) resolveXBackendRef(routeNS, routeKind, xbNS, name st
 	if !r.ExperimentalBackends || col == nil {
 		return cfclient.ResolvedBackend{}, reasonInvalidKind
 	}
-	if routeNS != xbNS && !col.permitted[permitKey{routeNS, routeKind, xbNS, name}] {
+	if routeNS != xbNS {
 		return cfclient.ResolvedBackend{}, reasonRefNotPermitted
 	}
 	xb := col.fetched[xbKey{xbNS, name}]
 	if xb == nil {
 		return cfclient.ResolvedBackend{}, reasonBackendNotFound
 	}
-	return translateXBackend(xb)
+	return translateXBackend(xb, routeKind)
 }
 
 // backendResolver returns the cloudflare BackendResolver used while building
@@ -237,14 +216,14 @@ func (r *GatewayReconciler) backendResolver(col *xbBackends) cfclient.BackendRes
 // translateXBackend maps an XBackend spec to a Cloudflare tunnel service URL and
 // the originRequest deltas its protocol/TLS settings imply. A non-empty reason
 // means the backend can't be served (unsupported protocol or TLS mode).
-func translateXBackend(xb *apisxv1alpha1.XBackend) (cfclient.ResolvedBackend, string) {
+func translateXBackend(xb *apisxv1alpha1.XBackend, routeKind string) (cfclient.ResolvedBackend, string) {
 	if xb.Spec.Type != apisxv1alpha1.BackendTypeExternalHostname || xb.Spec.ExternalHostname == nil {
 		return cfclient.ResolvedBackend{}, reasonUnsupportedProtocol
 	}
 	host := string(xb.Spec.ExternalHostname.Hostname)
 	port := int(xb.Spec.Port.Port)
 
-	proto := apisxv1alpha1.BackendProtocolHTTP
+	proto := defaultXBackendProtocol(routeKind)
 	if xb.Spec.Protocol != nil {
 		proto = *xb.Spec.Protocol
 	}
@@ -308,6 +287,17 @@ func translateXBackend(xb *apisxv1alpha1.XBackend) (cfclient.ResolvedBackend, st
 		Service:       fmt.Sprintf("%s://%s:%d", scheme, host, port),
 		OriginRequest: origin,
 	}, reasonResolvedOK
+}
+
+func defaultXBackendProtocol(routeKind string) apisxv1alpha1.BackendProtocol {
+	switch routeKind {
+	case "GRPCRoute":
+		return apisxv1alpha1.BackendProtocolGRPC
+	case "TLSRoute", "TCPRoute":
+		return apisxv1alpha1.BackendProtocolTCP
+	default:
+		return apisxv1alpha1.BackendProtocolHTTP
+	}
 }
 
 // originRequestEmpty reports whether translateXBackend set any origin field.

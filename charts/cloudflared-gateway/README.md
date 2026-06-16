@@ -69,6 +69,7 @@ kubectl -n cloudflared-gateway create secret generic cloudflare-creds \
 | `podAnnotations` | object | `{}` | Annotations added to the controller pod. |
 | `podLabels` | object | `{}` | Additional labels added to the controller pod. |
 | `extraEnv` | list | `[]` | Extra environment variables merged into the `manager` container after the Cloudflare credential vars. |
+| `dns.enabled` | bool | `false` | Manage proxied CNAME records (`hostname` → `<tunnelID>.cfargotunnel.com`) for attached route hostnames. Requires the API token to also carry `Zone:Read` + `Zone:DNS:Edit`. |
 
 ## Upgrading
 

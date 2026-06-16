@@ -41,6 +41,7 @@ func TestTranslateXBackend(t *testing.T) {
 	tests := []struct {
 		name        string
 		xb          *apisxv1alpha1.XBackend
+		routeKind   string
 		wantService string
 		wantReason  string
 		wantHTTP2   bool
@@ -49,22 +50,45 @@ func TestTranslateXBackend(t *testing.T) {
 		{
 			name:        "http default protocol no tls",
 			xb:          makeXBackend("ns", "a", "api.example.com", 80, nil, nil),
+			routeKind:   "HTTPRoute",
 			wantService: "http://api.example.com:80",
+		},
+		{
+			name:        "grpc route defaults to grpc",
+			xb:          makeXBackend("ns", "a", "grpc.example.com", 8080, nil, nil),
+			routeKind:   "GRPCRoute",
+			wantService: "http://grpc.example.com:8080",
+			wantHTTP2:   true,
+		},
+		{
+			name:        "tcp route defaults to tcp",
+			xb:          makeXBackend("ns", "a", "tcp.example.com", 5432, nil, nil),
+			routeKind:   "TCPRoute",
+			wantService: "tcp://tcp.example.com:5432",
+		},
+		{
+			name:        "tls route defaults to tcp",
+			xb:          makeXBackend("ns", "a", "tls.example.com", 443, nil, nil),
+			routeKind:   "TLSRoute",
+			wantService: "tcp://tls.example.com:443",
 		},
 		{
 			name:        "https server-only with sni",
 			xb:          makeXBackend("ns", "a", "api.example.com", 443, nil, tlsServerOnly),
+			routeKind:   "HTTPRoute",
 			wantService: "https://api.example.com:443",
 			wantSNI:     "verify.example.com",
 		},
 		{
 			name:        "tls none stays http",
 			xb:          makeXBackend("ns", "a", "api.example.com", 8080, nil, tlsNone),
+			routeKind:   "HTTPRoute",
 			wantService: "http://api.example.com:8080",
 		},
 		{
 			name:        "http2 sets http2origin",
 			xb:          makeXBackend("ns", "a", "api.example.com", 443, protoPtr(apisxv1alpha1.BackendProtocolHTTP2), tlsServerOnly),
+			routeKind:   "HTTPRoute",
 			wantService: "https://api.example.com:443",
 			wantHTTP2:   true,
 			wantSNI:     "verify.example.com",
@@ -72,6 +96,7 @@ func TestTranslateXBackend(t *testing.T) {
 		{
 			name:        "grpc sets http2origin",
 			xb:          makeXBackend("ns", "a", "grpc.example.com", 443, protoPtr(apisxv1alpha1.BackendProtocolGRPC), tlsServerOnly),
+			routeKind:   "HTTPRoute",
 			wantService: "https://grpc.example.com:443",
 			wantHTTP2:   true,
 			wantSNI:     "verify.example.com",
@@ -79,38 +104,44 @@ func TestTranslateXBackend(t *testing.T) {
 		{
 			name:        "tcp protocol",
 			xb:          makeXBackend("ns", "a", "tcp.example.com", 5432, protoPtr(apisxv1alpha1.BackendProtocolTCP), nil),
+			routeKind:   "HTTPRoute",
 			wantService: "tcp://tcp.example.com:5432",
 		},
 		{
 			name:        "tcp with tls none stays tcp",
 			xb:          makeXBackend("ns", "a", "tcp.example.com", 5432, protoPtr(apisxv1alpha1.BackendProtocolTCP), tlsNone),
+			routeKind:   "HTTPRoute",
 			wantService: "tcp://tcp.example.com:5432",
 		},
 		{
 			name:       "tcp with server-only tls unsupported",
 			xb:         makeXBackend("ns", "a", "tcp.example.com", 5432, protoPtr(apisxv1alpha1.BackendProtocolTCP), tlsServerOnly),
+			routeKind:  "HTTPRoute",
 			wantReason: reasonUnsupportedProtocol,
 		},
 		{
 			name:       "mcp unsupported",
 			xb:         makeXBackend("ns", "a", "api.example.com", 443, protoPtr(apisxv1alpha1.BackendProtocolMCP), nil),
+			routeKind:  "HTTPRoute",
 			wantReason: reasonUnsupportedProtocol,
 		},
 		{
 			name:       "mtls unsupported",
 			xb:         makeXBackend("ns", "a", "api.example.com", 443, nil, tlsMTLS),
+			routeKind:  "HTTPRoute",
 			wantReason: reasonUnsupportedProtocol,
 		},
 		{
 			name:       "custom ca certs unsupported",
 			xb:         makeXBackend("ns", "a", "api.example.com", 443, nil, tlsCustomCA),
+			routeKind:  "HTTPRoute",
 			wantReason: reasonUnsupportedCACerts,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			rb, reason := translateXBackend(tc.xb)
+			rb, reason := translateXBackend(tc.xb, tc.routeKind)
 			if reason != tc.wantReason {
 				t.Fatalf("reason: got %q, want %q", reason, tc.wantReason)
 			}
@@ -140,8 +171,6 @@ func TestTranslateXBackend(t *testing.T) {
 }
 
 func TestResolveXBackendRef_Reasons(t *testing.T) {
-	xb := makeXBackend("ext", "api", "api.example.com", 443, nil, &apisxv1alpha1.BackendTLS{Mode: apisxv1alpha1.BackendTLSModeServerOnly})
-
 	t.Run("flag off -> InvalidKind", func(t *testing.T) {
 		r := &GatewayReconciler{ExperimentalBackends: false}
 		_, reason := r.resolveXBackendRef("apps", "HTTPRoute", "apps", "api", nil)
@@ -153,8 +182,7 @@ func TestResolveXBackendRef_Reasons(t *testing.T) {
 	t.Run("cross-ns not permitted -> RefNotPermitted", func(t *testing.T) {
 		r := &GatewayReconciler{ExperimentalBackends: true}
 		col := &xbBackends{
-			fetched:   map[xbKey]*apisxv1alpha1.XBackend{{namespace: "ext", name: "api"}: xb},
-			permitted: map[permitKey]bool{},
+			fetched: map[xbKey]*apisxv1alpha1.XBackend{},
 		}
 		_, reason := r.resolveXBackendRef("apps", "HTTPRoute", "ext", "api", col)
 		if reason != reasonRefNotPermitted {
@@ -164,7 +192,7 @@ func TestResolveXBackendRef_Reasons(t *testing.T) {
 
 	t.Run("missing -> BackendNotFound", func(t *testing.T) {
 		r := &GatewayReconciler{ExperimentalBackends: true}
-		col := &xbBackends{fetched: map[xbKey]*apisxv1alpha1.XBackend{}, permitted: map[permitKey]bool{}}
+		col := &xbBackends{fetched: map[xbKey]*apisxv1alpha1.XBackend{}}
 		_, reason := r.resolveXBackendRef("apps", "HTTPRoute", "apps", "api", col)
 		if reason != reasonBackendNotFound {
 			t.Errorf("got %q, want BackendNotFound", reason)
@@ -174,8 +202,7 @@ func TestResolveXBackendRef_Reasons(t *testing.T) {
 	t.Run("same-ns resolved", func(t *testing.T) {
 		r := &GatewayReconciler{ExperimentalBackends: true}
 		col := &xbBackends{
-			fetched:   map[xbKey]*apisxv1alpha1.XBackend{{namespace: "apps", name: "api"}: makeXBackend("apps", "api", "api.example.com", 443, nil, &apisxv1alpha1.BackendTLS{Mode: apisxv1alpha1.BackendTLSModeServerOnly})},
-			permitted: map[permitKey]bool{},
+			fetched: map[xbKey]*apisxv1alpha1.XBackend{{namespace: "apps", name: "api"}: makeXBackend("apps", "api", "api.example.com", 443, nil, &apisxv1alpha1.BackendTLS{Mode: apisxv1alpha1.BackendTLSModeServerOnly})},
 		}
 		rb, reason := r.resolveXBackendRef("apps", "HTTPRoute", "apps", "api", col)
 		if reason != reasonResolvedOK {
@@ -186,22 +213,11 @@ func TestResolveXBackendRef_Reasons(t *testing.T) {
 		}
 	})
 
-	t.Run("cross-ns permitted resolved", func(t *testing.T) {
-		r := &GatewayReconciler{ExperimentalBackends: true}
-		col := &xbBackends{
-			fetched:   map[xbKey]*apisxv1alpha1.XBackend{{namespace: "ext", name: "api"}: xb},
-			permitted: map[permitKey]bool{{routeNS: "apps", routeKind: "HTTPRoute", xbNS: "ext", name: "api"}: true},
-		}
-		_, reason := r.resolveXBackendRef("apps", "HTTPRoute", "ext", "api", col)
-		if reason != reasonResolvedOK {
-			t.Errorf("got %q, want OK", reason)
-		}
-	})
 }
 
 func TestRouteResolvedRefs(t *testing.T) {
 	r := &GatewayReconciler{ExperimentalBackends: true}
-	col := &xbBackends{fetched: map[xbKey]*apisxv1alpha1.XBackend{}, permitted: map[permitKey]bool{}}
+	col := &xbBackends{fetched: map[xbKey]*apisxv1alpha1.XBackend{}}
 
 	t.Run("no xbackend refs -> OK", func(t *testing.T) {
 		refs := []gwapiv1.BackendObjectReference{{Name: "svc"}}

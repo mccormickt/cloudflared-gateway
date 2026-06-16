@@ -38,7 +38,11 @@ type ListenerRouteCount struct {
 }
 
 // PatchGatewayStatus sets Accepted+Programmed conditions and listener statuses.
-func PatchGatewayStatus(ctx context.Context, c client.Client, gw *gwapiv1.Gateway, tunnelID string, listenerCounts []ListenerRouteCount) error {
+// A non-nil dnsErr means DNS records could not be reconciled; the Programmed
+// condition is then reported False so the Gateway does not advertise itself as
+// ready for traffic while its hostnames have no DNS records pointing at the
+// tunnel.
+func PatchGatewayStatus(ctx context.Context, c client.Client, gw *gwapiv1.Gateway, tunnelID string, listenerCounts []ListenerRouteCount, dnsErr error) error {
 	acceptedCond := metav1.Condition{
 		Type:               string(gwapiv1.GatewayConditionAccepted),
 		Status:             metav1.ConditionTrue,
@@ -48,13 +52,21 @@ func PatchGatewayStatus(ctx context.Context, c client.Client, gw *gwapiv1.Gatewa
 		Message:            "Gateway is accepted",
 	}
 
+	programmedStatus := metav1.ConditionTrue
+	programmedReason := string(gwapiv1.GatewayReasonProgrammed)
+	programmedMsg := "Tunnel is configured"
+	if dnsErr != nil {
+		programmedStatus = metav1.ConditionFalse
+		programmedReason = "DNSNotReady"
+		programmedMsg = fmt.Sprintf("Tunnel is configured but DNS records are not ready: %v", dnsErr)
+	}
 	programmedCond := metav1.Condition{
 		Type:               string(gwapiv1.GatewayConditionProgrammed),
-		Status:             metav1.ConditionTrue,
+		Status:             programmedStatus,
 		ObservedGeneration: gw.Generation,
-		LastTransitionTime: transitionTime(gw.Status.Conditions, string(gwapiv1.GatewayConditionProgrammed), metav1.ConditionTrue),
-		Reason:             string(gwapiv1.GatewayReasonProgrammed),
-		Message:            "Tunnel is configured",
+		LastTransitionTime: transitionTime(gw.Status.Conditions, string(gwapiv1.GatewayConditionProgrammed), programmedStatus),
+		Reason:             programmedReason,
+		Message:            programmedMsg,
 	}
 
 	gw.Status.Conditions = setCondition(gw.Status.Conditions, acceptedCond)

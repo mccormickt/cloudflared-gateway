@@ -55,7 +55,7 @@ The reconcile loop is Gateway-primary. For each `Gateway` the controller:
 - `kubectl` (v1.28+)
 - `helm` (v3.8+ for OCI support)
 - A Cloudflare account with tunnel permissions
-- A Cloudflare API token scoped to `Account:Cloudflare Tunnel:Edit`
+- A Cloudflare API token scoped to `Account:Cloudflare Tunnel:Edit` (for [DNS management](#dns-management) the token must also be **account-scoped** with `Zone:Read` + `Zone:DNS:Edit` — a token restricted to specific zones cannot enumerate zones and DNS silently does nothing)
 - Your Cloudflare account ID
 
 ### 1. Create a KinD cluster
@@ -119,6 +119,12 @@ kubectl get deployment -A -l app=cloudflared-<gateway-name>
 curl https://my-host.example.com/
 ```
 
+> **DNS:** For traffic to reach the tunnel, each route hostname needs a *proxied*
+> CNAME pointing at `<tunnelID>.cfargotunnel.com`. Enable [DNS management](#dns-management)
+> to have the controller create and prune these records for you, or create them by
+> hand in the Cloudflare dashboard. The Gateway's `status.addresses` reports the
+> `cfargotunnel.com` target to point at.
+
 ## Configuration
 
 The full chart value reference lives in [`charts/cloudflared-gateway/values.yaml`](charts/cloudflared-gateway/values.yaml). The most common values:
@@ -131,6 +137,7 @@ The full chart value reference lives in [`charts/cloudflared-gateway/values.yaml
 | `cloudflare.existingSecret` | Name of a pre-existing Secret with `account-id` and `api-token` keys |
 | `controllerName` | `GatewayClass.spec.controllerName` value the controller claims (default: `jan0ski.net/cloudflared-gateway`) |
 | `resources` | Pod resource requests and limits |
+| `dns.enabled` | Manage proxied CNAME records for route hostnames (default: `false`; see [DNS management](#dns-management)) |
 
 ### Origin request tuning (CloudflareOriginPolicy)
 
@@ -153,6 +160,19 @@ Fields owned by other mechanisms are intentionally not exposed here: Access (`Cl
 ### Tunnel infrastructure (CloudflareTunnelConfig)
 
 The cloudflared Deployment is customized with the `CloudflareTunnelConfig` CRD, referenced via `GatewayClass.spec.parametersRef` (cluster-wide default) or `Gateway.spec.infrastructure.parametersRef` (per-Gateway override). It exposes `replicas`, `image`, `resources`, `logLevel`, `metricsPort`, pod labels/annotations, and scheduling (`nodeSelector`/`tolerations`/`affinity`). The pod security context is always fixed by the controller. See [`examples/cloudflare-tunnel-config.yaml`](examples/cloudflare-tunnel-config.yaml).
+
+### DNS management
+
+A Cloudflare Tunnel only receives traffic for a hostname once a *proxied* (orange-cloud) CNAME points that hostname at `<tunnelID>.cfargotunnel.com`. Set `dns.enabled=true` (flag `--enable-dns-management`, env `ENABLE_DNS_MANAGEMENT`) and the controller creates and maintains that record for every attached `HTTPRoute`/`GRPCRoute`/`TLSRoute` hostname, so no manual DNS step is needed. It is **off by default**.
+
+- **Token scopes**: the API token must be **account-scoped** and additionally carry `Zone:Read` + `Zone:DNS:Edit`. Zone discovery lists zones by account; a token restricted to specific zones returns no zones, so no records are created (the controller logs a per-hostname "no zone" skip).
+- **Always proxied**: records are created proxied with automatic TTL, because a tunnel CNAME is only reachable through Cloudflare's edge.
+- **Wildcard hostnames are skipped**: a proxied wildcard CNAME requires an Enterprise plan, so `*.example.com` route hostnames are not managed (logged) and must be configured by hand.
+- **Ownership**: each record is tagged with an owner comment (`cloudflared-gateway:owner=<gateway-uid>`). The controller only ever updates or deletes records it created — a pre-existing record for the same hostname is left untouched and logged. Records are batched per zone via Cloudflare's transactional [batch DNS endpoint](https://developers.cloudflare.com/dns/manage-dns-records/how-to/batch-record-changes/).
+- **Cleanup**: when a Gateway is deleted, its owned records are pruned by the finalizer.
+- **Per-Gateway opt-out**: annotate a Gateway with `cloudflared-gateway.jan0ski.net/dns-managed: "false"` to manage its DNS yourself.
+
+Hostnames that don't fall under a zone on the account are skipped (and logged). A hostname whose entire zone no longer has any served route is pruned on Gateway deletion.
 
 ## CloudflareAccessPolicy
 
@@ -192,6 +212,7 @@ Mapping and limitations:
 
 | XBackend spec | Behavior |
 |---------------|----------|
+| `protocol` omitted | Uses the referencing Route's protocol: HTTP for HTTPRoute, GRPC for GRPCRoute, and TCP for TLSRoute/TCPRoute |
 | `protocol: HTTP`/`HTTP11` | HTTP origin |
 | `protocol: HTTP2`/`H2C`/`GRPC` | HTTP/2 origin |
 | `protocol: TCP` (with `tls.mode: None` or unset) | `tcp://` origin |
@@ -204,7 +225,7 @@ Mapping and limitations:
 
 Each route rule uses only its first `backendRef` (`backendRefs[0]`); additional backends and `weight` are ignored, since a Cloudflare ingress rule maps to a single origin service. Weighted/multi-backend external origins are not supported.
 
-Cross-namespace `XBackend` references require a `ReferenceGrant` in the backend's namespace (`to.group: gateway.networking.x-k8s.io`, `to.kind: XBackend`); otherwise the route reports `ResolvedRefs=False` with reason `RefNotPermitted`. When the feature is disabled, a route referencing an `XBackend` reports `ResolvedRefs=False` (`InvalidKind`) and serves `http_status:503`. XBackends report GEP-713 ancestor status under `status.parents[]`.
+An `XBackend` must be in the same namespace as the Route that references it; cross-namespace references report `ResolvedRefs=False` with reason `RefNotPermitted`. When the feature is disabled, a route referencing an `XBackend` reports `ResolvedRefs=False` (`InvalidKind`) and serves `http_status:503`. XBackends report GEP-713 ancestor status under `status.parents[]`.
 
 ## Verifying releases
 

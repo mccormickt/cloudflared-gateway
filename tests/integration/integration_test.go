@@ -109,10 +109,25 @@ type mockCloudflareClient struct {
 	existingTunnel *cfclient.Tunnel
 	accountID      string
 	lastIngress    []cfclient.IngressRule
+
+	zones        []cfclient.Zone
+	dnsRecords   map[string][]cfclient.DNSRecord
+	nextRecordID int
 }
 
 func newMockClient() *mockCloudflareClient {
 	return &mockCloudflareClient{accountID: "test-account"}
+}
+
+func (m *mockCloudflareClient) withZones(zones ...cfclient.Zone) *mockCloudflareClient {
+	m.zones = zones
+	return m
+}
+
+func (m *mockCloudflareClient) dnsRecordsFor(zoneID string) []cfclient.DNSRecord {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]cfclient.DNSRecord(nil), m.dnsRecords[zoneID]...)
 }
 
 func (m *mockCloudflareClient) record(method string, args ...any) {
@@ -169,6 +184,53 @@ func (m *mockCloudflareClient) UpdateTunnelConfiguration(_ context.Context, tunn
 	return nil
 }
 
+func (m *mockCloudflareClient) ListZones(_ context.Context) ([]cfclient.Zone, error) {
+	m.record("ListZones")
+	return append([]cfclient.Zone(nil), m.zones...), nil
+}
+
+func (m *mockCloudflareClient) ListDNSRecords(_ context.Context, zoneID string) ([]cfclient.DNSRecord, error) {
+	m.record("ListDNSRecords", zoneID)
+	return m.dnsRecordsFor(zoneID), nil
+}
+
+func (m *mockCloudflareClient) ApplyDNSChanges(_ context.Context, zoneID string, changes cfclient.DNSChanges) error {
+	m.record("ApplyDNSChanges", zoneID, len(changes.Creates), len(changes.Updates), len(changes.Deletes))
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.dnsRecords == nil {
+		m.dnsRecords = map[string][]cfclient.DNSRecord{}
+	}
+	del := map[string]bool{}
+	for _, d := range changes.Deletes {
+		del[d.ID] = true
+	}
+	upd := map[string]cfclient.DNSRecord{}
+	for _, u := range changes.Updates {
+		upd[u.ID] = u
+	}
+	recs := m.dnsRecords[zoneID]
+	kept := recs[:0:0]
+	for _, r := range recs {
+		if del[r.ID] {
+			continue
+		}
+		if u, ok := upd[r.ID]; ok {
+			u.ID = r.ID
+			kept = append(kept, u)
+			continue
+		}
+		kept = append(kept, r)
+	}
+	for _, c := range changes.Creates {
+		m.nextRecordID++
+		c.ID = fmt.Sprintf("rec-%d", m.nextRecordID)
+		kept = append(kept, c)
+	}
+	m.dnsRecords[zoneID] = kept
+	return nil
+}
+
 func (m *mockCloudflareClient) getLastIngress() []cfclient.IngressRule {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -199,6 +261,11 @@ func startManager(t *testing.T, mockCF cfclient.APIClient) {
 		// real reconcile loop. Harmless for Service-only subtests, which never
 		// reference an XBackend.
 		ExperimentalBackends: true,
+		// Enabled so the DNSManagement subtest exercises the real DNS path. Other
+		// subtests still trigger a ListZones call per reconcile, but their
+		// example.com hostnames don't suffix-match the seeded dnsmgmt.test zone,
+		// so no records are written for them.
+		ManageDNS: true,
 	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		t.Fatalf("failed to setup controller: %v", err)
@@ -482,7 +549,10 @@ func TestIntegration_NamespaceSelectorAttachment(t *testing.T) {
 // name conflicts (controller-runtime requires unique names per process).
 func TestIntegration_ControllerLoop(t *testing.T) {
 	ctx := context.Background()
-	mock := newMockClient()
+	// Seed a dedicated zone for the DNSManagement subtest. Other subtests use
+	// *.example.com hostnames that don't match this zone, so DNS is a no-op for
+	// them. Seeding at creation (never mutated mid-run) avoids data races.
+	mock := newMockClient().withZones(cfclient.Zone{ID: "zone-dns", Name: "dnsmgmt.test"})
 	startManager(t, mock)
 
 	gc := makeGatewayClass("integ-gc-loop")
@@ -863,7 +933,7 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 		}, 10*time.Second, 100*time.Millisecond, "XBackend should report Accepted ancestor status for the Gateway")
 	})
 
-	t.Run("XBackendCrossNamespace", func(t *testing.T) {
+	t.Run("XBackendRequiresSameNamespace", func(t *testing.T) {
 		gw := makeGateway("integ-gw-xbackend-xns", "default", gc.Name)
 		if err := k8sClient.Create(ctx, gw); err != nil {
 			t.Fatalf("failed to create Gateway: %v", err)
@@ -927,8 +997,7 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 			return "", "", false
 		}
 
-		// Scenario A: no ReferenceGrant in the backend namespace. The cross-namespace
-		// XBackend ref must be denied -> ResolvedRefs=False, reason RefNotPermitted.
+		// A cross-namespace XBackend ref is always denied.
 		nsNoGrant := &v1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "integ-xb-nogrant"}}
 		if err := k8sClient.Create(ctx, nsNoGrant); err != nil {
 			t.Fatalf("failed to create namespace: %v", err)
@@ -950,11 +1019,9 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 		requireEventually(t, func() bool {
 			status, reason, ok := routeResolvedRefs(routeDenied.Name)
 			return ok && status == metav1.ConditionFalse && reason == string(gwapiv1.RouteReasonRefNotPermitted)
-		}, 10*time.Second, 100*time.Millisecond, "cross-namespace XBackend ref without a ReferenceGrant should report RefNotPermitted")
+		}, 10*time.Second, 100*time.Millisecond, "cross-namespace XBackend ref should report RefNotPermitted")
 
-		// Scenario B: a ReferenceGrant authorizes the cross-namespace ref. Created
-		// before the route so the first reconcile already sees the grant (the
-		// controller does not watch ReferenceGrant) -> ResolvedRefs=True.
+		// A ReferenceGrant does not override XBackend's same-namespace requirement.
 		nsGrant := &v1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "integ-xb-grant"}}
 		if err := k8sClient.Create(ctx, nsGrant); err != nil {
 			t.Fatalf("failed to create namespace: %v", err)
@@ -994,8 +1061,8 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 
 		requireEventually(t, func() bool {
 			status, reason, ok := routeResolvedRefs(routeAllowed.Name)
-			return ok && status == metav1.ConditionTrue && reason == string(gwapiv1.RouteReasonResolvedRefs)
-		}, 10*time.Second, 100*time.Millisecond, "cross-namespace XBackend ref with a ReferenceGrant should report ResolvedRefs=True")
+			return ok && status == metav1.ConditionFalse && reason == string(gwapiv1.RouteReasonRefNotPermitted)
+		}, 10*time.Second, 100*time.Millisecond, "ReferenceGrant should not authorize a cross-namespace XBackend ref")
 	})
 
 	t.Run("Cleanup", func(t *testing.T) {
@@ -1099,6 +1166,53 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 		if controllerutil.ContainsFinalizer(&fetched, "cloudflared-gateway.jan0ski.net/cleanup") {
 			t.Error("finalizer should NOT be added to a gateway with a different controller")
 		}
+	})
+
+	// DNSManagement exercises the DNS path end-to-end. The shared mock has the
+	// zone dnsmgmt.test seeded; this route's hostname lives in that zone (other
+	// subtests' example.com hostnames don't, so DNS was a no-op for them).
+	t.Run("DNSManagement", func(t *testing.T) {
+		mock.mu.Lock()
+		mock.calls = nil
+		mock.existingTunnel = nil
+		mock.mu.Unlock()
+
+		gw := makeGateway("integ-gw-dns", "default", gc.Name)
+		if err := k8sClient.Create(ctx, gw); err != nil {
+			t.Fatalf("failed to create Gateway: %v", err)
+		}
+
+		route := makeHTTPRoute("integ-route-dns", "default", gw.Name)
+		route.Spec.Hostnames = []gwapiv1.Hostname{"app.dnsmgmt.test"}
+		if err := k8sClient.Create(ctx, route); err != nil {
+			t.Fatalf("failed to create HTTPRoute: %v", err)
+		}
+		t.Cleanup(func() { k8sClient.Delete(ctx, route) })
+
+		// A proxied CNAME for the route hostname should appear in the zone,
+		// pointing at the tunnel.
+		requireEventually(t, func() bool {
+			for _, r := range mock.dnsRecordsFor("zone-dns") {
+				if r.Name == "app.dnsmgmt.test" && r.Content == "mock-tunnel-id.cfargotunnel.com" && r.Proxied {
+					return true
+				}
+			}
+			return false
+		}, 10*time.Second, 100*time.Millisecond, "proxied CNAME should be created for the route hostname")
+
+		// Set the existing tunnel so cleanup finds it, then delete the Gateway and
+		// confirm the finalizer prunes the owned DNS record.
+		mock.mu.Lock()
+		mock.existingTunnel = &cfclient.Tunnel{ID: "mock-tunnel-id", Name: gw.Name}
+		mock.mu.Unlock()
+
+		if err := k8sClient.Delete(ctx, gw); err != nil {
+			t.Fatalf("failed to delete Gateway: %v", err)
+		}
+
+		requireEventually(t, func() bool {
+			return len(mock.dnsRecordsFor("zone-dns")) == 0
+		}, 10*time.Second, 100*time.Millisecond, "owned DNS record should be pruned on Gateway deletion")
 	})
 }
 

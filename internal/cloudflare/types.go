@@ -1,12 +1,58 @@
 package cloudflare
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // Tunnel is the controller's view of a Cloudflare tunnel. It carries only the
 // fields the controller needs, keeping callers free of any SDK type.
 type Tunnel struct {
 	ID   string
 	Name string
+}
+
+// Zone is the controller's view of a Cloudflare DNS zone, used to route a
+// hostname to the zone that should hold its record.
+type Zone struct {
+	ID   string
+	Name string
+}
+
+// DNSRecord is the controller's representation of a Cloudflare DNS record. Only
+// the fields needed to manage proxied CNAMEs for tunnel hostnames are carried;
+// the client boundary translates to/from SDK types. Names and CNAME targets are
+// normalized (lowercase, no trailing dot) so reads and desired records compare
+// cleanly.
+type DNSRecord struct {
+	ID      string // set when read from the API; empty for desired records
+	Name    string // FQDN, normalized
+	Type    string // always "CNAME" for records this controller manages
+	Content string // CNAME target, e.g. <tunnelID>.cfargotunnel.com
+	Proxied bool
+	Comment string // ownership marker, e.g. "cloudflared-gateway:owner=<gateway-uid>"
+}
+
+// DNSChanges is a planned set of DNS record mutations applied as a single
+// batched, transactional request per zone (mirrors Cloudflare's
+// dns_records/batch endpoint). Updates and Deletes carry record IDs from a prior
+// read; Creates do not.
+type DNSChanges struct {
+	Creates []DNSRecord
+	Updates []DNSRecord
+	Deletes []DNSRecord
+}
+
+// Empty reports whether the change set has no mutations.
+func (c DNSChanges) Empty() bool {
+	return len(c.Creates) == 0 && len(c.Updates) == 0 && len(c.Deletes) == 0
+}
+
+// NormalizeDNSName lowercases a DNS name and strips any trailing dot and
+// surrounding whitespace, so that case- or dot-only differences between a
+// desired record and an API read-back do not produce spurious diffs.
+func NormalizeDNSName(name string) string {
+	return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(name), "."))
 }
 
 // AccessConfig gates a hostname behind Cloudflare Access. It mirrors the
@@ -78,10 +124,9 @@ type ResolvedBackend struct {
 }
 
 // BackendRef is the normalized view of a route backendRef passed to a
-// BackendResolver. RouteNamespace and RouteKind identify the referencing route
-// (the ReferenceGrant "from" identity); Group/Kind/Namespace/Name/Port identify
-// the backend the ref points at, with Namespace already defaulted to the route's
-// namespace when the ref omitted it.
+// BackendResolver. RouteNamespace and RouteKind identify the referencing route;
+// Group/Kind/Namespace/Name/Port identify the backend the ref points at, with
+// Namespace already defaulted to the route's namespace when the ref omitted it.
 type BackendRef struct {
 	RouteNamespace string
 	RouteKind      string

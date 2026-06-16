@@ -36,7 +36,13 @@ func (r *GatewayReconciler) patchXBackendStatuses(ctx context.Context, gw *gwapi
 
 		var changed bool
 		if managed {
-			_, reason := translateXBackend(xb)
+			reason := reasonResolvedOK
+			for routeKind := range col.referenced[xbKey{xb.Namespace, xb.Name}] {
+				_, candidate := translateXBackend(xb, routeKind)
+				if reasonSeverity(candidate) > reasonSeverity(reason) {
+					reason = candidate
+				}
+			}
 			upsertXBackendAncestor(&xb.Status, ancestor, cn, xbAcceptedCondition(xb.Generation, reason))
 			changed = true
 		} else {

@@ -57,6 +57,10 @@ func main() {
 		envBool("ENABLE_EXPERIMENTAL_BACKENDS", false),
 		"Enable support for the experimental Gateway API XBackend resource "+
 			"(gateway.networking.x-k8s.io), letting routes target external FQDN destinations.")
+	enableDNSManagement := flag.Bool("enable-dns-management",
+		envBool("ENABLE_DNS_MANAGEMENT", false),
+		"Manage proxied CNAME records (hostname → <tunnelID>.cfargotunnel.com) for "+
+			"attached route hostnames. Requires the API token to also carry Zone:Read + DNS:Edit.")
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New())
@@ -93,6 +97,7 @@ func main() {
 		CloudflareClient:     cfClient,
 		ControllerName:       gwapiv1.GatewayController(controller.ControllerName),
 		ExperimentalBackends: *enableExperimentalBackends,
+		ManageDNS:            *enableDNSManagement,
 	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		logger.Error(err, "Error setting up controller")

@@ -60,6 +60,22 @@ podLabels: {}
 # Extra env vars for the manager container (merged after CF creds).
 extraEnv: []
 
+# DNS management.
+dns:
+  # Create proxied CNAME records (hostname -> <tunnelID>.cfargotunnel.com) for
+  # every attached route hostname, so traffic reaches the tunnel without a manual
+  # DNS step. Records are tagged with an owner comment, so only records this
+  # controller created are ever updated or removed — pre-existing records are
+  # left untouched. Per-Gateway opt-out: annotate a Gateway with
+  # cloudflared-gateway.jan0ski.net/dns-managed: "false".
+  #
+  # Requires the Cloudflare API token to be ACCOUNT-scoped and ALSO carry
+  # Zone:Read + DNS:Edit (in addition to the tunnel scope) — zone discovery
+  # lists zones by account, so a token restricted to specific zones finds none
+  # and no records are created. Wildcard hostnames (*.example.com) are skipped
+  # (proxied wildcards need an Enterprise plan). Off by default.
+  enabled: false
+
 # Experimental features.
 experimental:
   backends:

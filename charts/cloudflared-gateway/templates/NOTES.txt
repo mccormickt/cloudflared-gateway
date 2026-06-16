@@ -22,6 +22,19 @@
 4. Find the provisioned tunnel in the Cloudflare dashboard:
 
     https://one.dash.cloudflare.com/ -> Networks -> Tunnels
+{{- if .Values.dns.enabled }}
+
+5. DNS management is ENABLED: the controller creates a proxied CNAME
+   (hostname -> <tunnelID>.cfargotunnel.com) for each route hostname. Ensure the
+   API token also carries Zone:Read + Zone:DNS:Edit. Annotate a Gateway with
+   cloudflared-gateway.jan0ski.net/dns-managed: "false" to opt it out.
+{{- else }}
+
+5. DNS is NOT managed by the controller. For each route hostname, create a
+   PROXIED CNAME to <tunnelID>.cfargotunnel.com (shown in the Gateway's
+   status.addresses), or set dns.enabled=true to have the controller manage it
+   (the API token then also needs Zone:Read + Zone:DNS:Edit).
+{{- end }}
 
 {{- if and (not .Values.cloudflare.existingSecret) (not (or .Values.cloudflare.accountId .Values.cloudflare.apiToken)) }}
 
