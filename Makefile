@@ -22,7 +22,7 @@ endif
 CONTROLLER_GEN := go tool controller-gen
 KO             ?= $(GOBIN)/ko
 
-.PHONY: build test test-unit test-integration test-e2e test-conformance test-all vet lint clean image setup-envtest install-crds manifests generate run fmt ko ko-build ko-push chart-package chart-push dev-release install-kind kind-up kind-down kind-load kind-install kind-dev help
+.PHONY: build test test-unit test-integration test-e2e test-conformance test-all vet lint clean image setup-envtest install-crds install-xbackend-crd manifests generate run fmt ko ko-build ko-push chart-package chart-push dev-release install-kind kind-up kind-down kind-load kind-install kind-dev help
 
 build: ## Build the controller binary
 	go build -o bin/$(BINARY) ./cmd/
@@ -35,10 +35,12 @@ run: ## Run the controller locally
 test: test-unit ## Run unit tests (default)
 
 test-unit: ## Run unit tests (no cluster required)
-	go test ./internal/...
+	go test ./cmd/... ./internal/...
 
-test-integration: ## Run envtest integration tests (real API server, no cluster)
-	KUBEBUILDER_ASSETS=$(KUBEBUILDER_ASSETS) go test ./tests/integration/ -timeout 120s -v
+test-integration: ## Run envtest against standard, experimental, and standard plus XBackend
+	GATEWAY_API_TEST_CHANNEL=standard KUBEBUILDER_ASSETS=$(KUBEBUILDER_ASSETS) go test ./tests/integration/ -timeout 120s -v -count=1
+	GATEWAY_API_TEST_CHANNEL=experimental KUBEBUILDER_ASSETS=$(KUBEBUILDER_ASSETS) go test ./tests/integration/ -timeout 120s -v -count=1
+	GATEWAY_API_TEST_CHANNEL=standard-xbackend KUBEBUILDER_ASSETS=$(KUBEBUILDER_ASSETS) go test ./tests/integration/ -timeout 120s -v -count=1
 
 test-e2e: ## Run kind e2e tests (creates a kind cluster, requires docker + CLOUDFLARE_* env)
 	go test ./tests/e2e/ -timeout 10m -v
@@ -97,7 +99,7 @@ install-kind: ## Install the pinned kind version
 kind-up: ## Create a local kind cluster ($(KIND_CLUSTER)) with Gateway API CRDs installed
 	kind create cluster --name $(KIND_CLUSTER)
 	kubectl apply --server-side -f \
-		https://github.com/kubernetes-sigs/gateway-api/releases/download/$(GWAPI_VERSION)/experimental-install.yaml
+		https://github.com/kubernetes-sigs/gateway-api/releases/download/$(GWAPI_VERSION)/standard-install.yaml
 
 kind-down: ## Delete the local kind cluster ($(KIND_CLUSTER))
 	kind delete cluster --name $(KIND_CLUSTER)
@@ -121,9 +123,14 @@ setup-envtest: ## Install envtest binaries into testbin/
 	go install sigs.k8s.io/controller-runtime/tools/setup-envtest@$(ENVTEST_VERSION)
 	setup-envtest use $(ENVTEST_K8S_VERSION) --bin-dir $(TESTBIN_DIR)
 
-install-crds: ## Install Gateway API CRDs into current cluster
+install-crds: ## Install standard Gateway API CRDs into current cluster
 	kubectl apply --server-side -f \
-		https://github.com/kubernetes-sigs/gateway-api/releases/download/$(GWAPI_VERSION)/experimental-install.yaml
+		https://github.com/kubernetes-sigs/gateway-api/releases/download/$(GWAPI_VERSION)/standard-install.yaml
+
+install-xbackend-crd: ## Install only the experimental XBackend CRD into current cluster
+	kubectl apply --server-side -f \
+		https://raw.githubusercontent.com/kubernetes-sigs/gateway-api/$(GWAPI_VERSION)/config/crd/experimental/gateway.networking.x-k8s.io_xbackends.yaml
+	kubectl wait --for=condition=Established --timeout=60s crd/xbackends.gateway.networking.x-k8s.io
 
 clean: ## Remove build artifacts
 	rm -rf bin/ dist/ chart-dist/ $(TESTBIN_DIR)

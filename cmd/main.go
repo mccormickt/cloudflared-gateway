@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"strconv"
 
@@ -17,9 +18,15 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 	apisxv1alpha1 "sigs.k8s.io/gateway-api/apisx/v1alpha1"
+	gwapiconsts "sigs.k8s.io/gateway-api/pkg/consts"
 )
 
 var scheme = runtime.NewScheme()
+
+// builtAgainstGatewayAPIVersion is the Gateway API bundle version this controller
+// is built against, taken from the linked gateway-api module so it cannot drift
+// from go.mod. XBackend CRDs must match this GA major.minor release line.
+const builtAgainstGatewayAPIVersion = gwapiconsts.BundleVersion
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
@@ -28,23 +35,31 @@ func init() {
 	utilruntime.Must(cfv1alpha1.AddToScheme(scheme))
 }
 
-// envBool reads a boolean environment variable, returning def when unset or
-// unparseable.
-func envBool(key string, def bool) bool {
-	v, ok := os.LookupEnv(key)
+// experimentalBackendsEnabled gives an explicit flag precedence over the
+// environment and rejects invalid environment values instead of disabling it.
+func experimentalBackendsEnabled(fs *flag.FlagSet) (bool, error) {
+	explicit := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "enable-experimental-backends" {
+			explicit = true
+		}
+	})
+	if explicit {
+		return strconv.ParseBool(fs.Lookup("enable-experimental-backends").Value.String())
+	}
+	v, ok := os.LookupEnv("ENABLE_EXPERIMENTAL_BACKENDS")
 	if !ok {
-		return def
+		return false, nil
 	}
 	b, err := strconv.ParseBool(v)
 	if err != nil {
-		return def
+		return false, fmt.Errorf("ENABLE_EXPERIMENTAL_BACKENDS must be a boolean: %w", err)
 	}
-	return b
+	return b, nil
 }
 
 func main() {
-	enableExperimentalBackends := flag.Bool("enable-experimental-backends",
-		envBool("ENABLE_EXPERIMENTAL_BACKENDS", false),
+	flag.Bool("enable-experimental-backends", false,
 		"Enable support for the experimental Gateway API XBackend resource "+
 			"(gateway.networking.x-k8s.io), letting routes target external FQDN destinations.")
 	flag.Parse()
@@ -52,13 +67,28 @@ func main() {
 	ctrl.SetLogger(zap.New())
 	logger := ctrl.Log.WithName(controller.ControllerName)
 
+	enableExperimentalBackends, err := experimentalBackendsEnabled(flag.CommandLine)
+	if err != nil {
+		logger.Error(err, "Invalid experimental backend configuration")
+		os.Exit(1)
+	}
+
 	cfClient, err := cloudflare.NewClientFromEnv()
 	if err != nil {
 		logger.Error(err, "Error creating Cloudflare client")
 		os.Exit(1)
 	}
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	cfg := ctrl.GetConfigOrDie()
+
+	// Fail fast if the Gateway API CRDs this controller needs aren't installed,
+	// and check the installed bundle's channel/version for compatibility.
+	if err := controller.PreflightCheckCRDs(cfg, enableExperimentalBackends, builtAgainstGatewayAPIVersion, logger); err != nil {
+		logger.Error(err, "Gateway API CRD preflight check failed")
+		os.Exit(1)
+	}
+
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme:                 scheme,
 		Logger:                 logger,
 		HealthProbeBindAddress: ":8081",
@@ -73,7 +103,7 @@ func main() {
 	reconciler := &controller.GatewayReconciler{
 		CloudflareClient:     cfClient,
 		ControllerName:       gwapiv1.GatewayController(controller.ControllerName),
-		ExperimentalBackends: *enableExperimentalBackends,
+		ExperimentalBackends: enableExperimentalBackends,
 	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		logger.Error(err, "Error setting up controller")
