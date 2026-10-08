@@ -8,7 +8,6 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
-	gwapiv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
 )
 
 // GetBackendTLSConfig looks up a BackendTLSPolicy targeting the given service
@@ -80,7 +79,7 @@ func buildOriginRequestFromPolicy(policy *gwapiv1.BackendTLSPolicy) *cfclient.Or
 
 // applyBackendTLSPolicies overrides the originRequest on TLS ingress rules
 // based on BackendTLSPolicy resources targeting the backend services.
-func (r *GatewayReconciler) applyBackendTLSPolicies(ctx context.Context, rules []cfclient.BuiltRule, tlsRoutes []gwapiv1alpha2.TLSRoute) ([]cfclient.BuiltRule, error) {
+func (r *GatewayReconciler) applyBackendTLSPolicies(ctx context.Context, rules []cfclient.BuiltRule, tlsRoutes []gwapiv1.TLSRoute) ([]cfclient.BuiltRule, error) {
 	if len(tlsRoutes) == 0 {
 		return rules, nil
 	}

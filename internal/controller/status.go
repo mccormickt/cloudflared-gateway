@@ -7,7 +7,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
-	gwapiv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
 )
 
 // PatchGatewayClassStatus sets the Accepted condition on a GatewayClass.
@@ -195,7 +194,7 @@ func PatchHTTPRouteStatus(ctx context.Context, c client.Client, route *gwapiv1.H
 }
 
 // PatchTLSRouteStatus sets the Accepted condition for a specific parentRef on a TLSRoute.
-func PatchTLSRouteStatus(ctx context.Context, c client.Client, route *gwapiv1alpha2.TLSRoute, gwName, gwNS string, accepted, accessAffected, originAffected bool) error {
+func PatchTLSRouteStatus(ctx context.Context, c client.Client, route *gwapiv1.TLSRoute, gwName, gwNS string, accepted, accessAffected, originAffected bool) error {
 	status := metav1.ConditionTrue
 	reason := string(gwapiv1.RouteReasonAccepted)
 	message := "Route is accepted"
@@ -238,7 +237,7 @@ func PatchTLSRouteStatus(ctx context.Context, c client.Client, route *gwapiv1alp
 }
 
 // PatchTCPRouteStatus sets the Accepted condition for a specific parentRef on a TCPRoute.
-func PatchTCPRouteStatus(ctx context.Context, c client.Client, route *gwapiv1alpha2.TCPRoute, gwName, gwNS string, accepted, accessAffected, originAffected bool) error {
+func PatchTCPRouteStatus(ctx context.Context, c client.Client, route *gwapiv1.TCPRoute, gwName, gwNS string, accepted, accessAffected, originAffected bool) error {
 	status := metav1.ConditionTrue
 	reason := string(gwapiv1.RouteReasonAccepted)
 	message := "Route is accepted"

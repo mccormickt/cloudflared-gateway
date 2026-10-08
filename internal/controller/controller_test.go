@@ -19,8 +19,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
-	gwapiv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
-	gwapiv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 )
 
 // ---------------------------------------------------------------------------
@@ -101,8 +99,6 @@ func testScheme() *runtime.Scheme {
 	s := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(s))
 	utilruntime.Must(gwapiv1.Install(s))
-	utilruntime.Must(gwapiv1alpha2.Install(s))
-	utilruntime.Must(gwapiv1beta1.Install(s))
 	utilruntime.Must(cfv1alpha1.AddToScheme(s))
 	return s
 }
@@ -727,18 +723,18 @@ func TestNamespaceSelector_MatchExpressions(t *testing.T) {
 
 func TestReferenceGrant_Allowed(t *testing.T) {
 	scheme := testScheme()
-	grant := &gwapiv1beta1.ReferenceGrant{
+	grant := &gwapiv1.ReferenceGrant{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "allow-routes",
 			Namespace: "backend",
 		},
-		Spec: gwapiv1beta1.ReferenceGrantSpec{
-			From: []gwapiv1beta1.ReferenceGrantFrom{{
+		Spec: gwapiv1.ReferenceGrantSpec{
+			From: []gwapiv1.ReferenceGrantFrom{{
 				Group:     "gateway.networking.k8s.io",
 				Kind:      "HTTPRoute",
 				Namespace: "frontend",
 			}},
-			To: []gwapiv1beta1.ReferenceGrantTo{{
+			To: []gwapiv1.ReferenceGrantTo{{
 				Group: "",
 				Kind:  "Service",
 			}},
@@ -759,18 +755,18 @@ func TestReferenceGrant_Allowed(t *testing.T) {
 func TestReferenceGrant_Denied(t *testing.T) {
 	scheme := testScheme()
 	// Grant exists but for different source namespace
-	grant := &gwapiv1beta1.ReferenceGrant{
+	grant := &gwapiv1.ReferenceGrant{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "allow-routes",
 			Namespace: "backend",
 		},
-		Spec: gwapiv1beta1.ReferenceGrantSpec{
-			From: []gwapiv1beta1.ReferenceGrantFrom{{
+		Spec: gwapiv1.ReferenceGrantSpec{
+			From: []gwapiv1.ReferenceGrantFrom{{
 				Group:     "gateway.networking.k8s.io",
 				Kind:      "HTTPRoute",
 				Namespace: "other-ns",
 			}},
-			To: []gwapiv1beta1.ReferenceGrantTo{{
+			To: []gwapiv1.ReferenceGrantTo{{
 				Group: "",
 				Kind:  "Service",
 			}},
@@ -899,18 +895,18 @@ func TestBuildDeployment_InfrastructureLabelsOnly(t *testing.T) {
 func TestReferenceGrant_NamedTarget(t *testing.T) {
 	scheme := testScheme()
 	targetName := gwapiv1.ObjectName("specific-svc")
-	grant := &gwapiv1beta1.ReferenceGrant{
+	grant := &gwapiv1.ReferenceGrant{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "allow-specific",
 			Namespace: "backend",
 		},
-		Spec: gwapiv1beta1.ReferenceGrantSpec{
-			From: []gwapiv1beta1.ReferenceGrantFrom{{
+		Spec: gwapiv1.ReferenceGrantSpec{
+			From: []gwapiv1.ReferenceGrantFrom{{
 				Group:     "gateway.networking.k8s.io",
 				Kind:      "HTTPRoute",
 				Namespace: "frontend",
 			}},
-			To: []gwapiv1beta1.ReferenceGrantTo{{
+			To: []gwapiv1.ReferenceGrantTo{{
 				Group: "",
 				Kind:  "Service",
 				Name:  &targetName,

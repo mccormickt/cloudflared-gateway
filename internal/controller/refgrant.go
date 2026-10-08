@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	gwapiv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
+	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
 // CheckReferenceGrant checks if a cross-namespace reference is permitted by a
@@ -13,7 +13,7 @@ import (
 // Returns true if a ReferenceGrant exists in toNS that allows references from
 // fromNS/fromKind to toKind/toName.
 func CheckReferenceGrant(ctx context.Context, c client.Client, fromNS, fromKind, toNS, toKind, toName string) (bool, error) {
-	var grantList gwapiv1beta1.ReferenceGrantList
+	var grantList gwapiv1.ReferenceGrantList
 	if err := c.List(ctx, &grantList, client.InNamespace(toNS)); err != nil {
 		return false, err
 	}
@@ -30,7 +30,7 @@ func CheckReferenceGrant(ctx context.Context, c client.Client, fromNS, fromKind,
 	return false, nil
 }
 
-func fromMatches(entries []gwapiv1beta1.ReferenceGrantFrom, fromNS, fromKind string) bool {
+func fromMatches(entries []gwapiv1.ReferenceGrantFrom, fromNS, fromKind string) bool {
 	for _, f := range entries {
 		if string(f.Group) == "gateway.networking.k8s.io" &&
 			string(f.Kind) == fromKind &&
@@ -41,7 +41,7 @@ func fromMatches(entries []gwapiv1beta1.ReferenceGrantFrom, fromNS, fromKind str
 	return false
 }
 
-func toMatches(entries []gwapiv1beta1.ReferenceGrantTo, toKind, toName string) bool {
+func toMatches(entries []gwapiv1.ReferenceGrantTo, toKind, toName string) bool {
 	for _, t := range entries {
 		// Empty group means core API group (Service, Secret, etc.)
 		groupOK := string(t.Group) == "" || string(t.Group) == "core"

@@ -29,8 +29,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
-	gwapiv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
-	gwapiv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 )
 
 var (
@@ -44,8 +42,6 @@ func TestMain(m *testing.M) {
 	// Register schemes
 	utilruntime.Must(clientgoscheme.AddToScheme(testScheme))
 	utilruntime.Must(gwapiv1.Install(testScheme))
-	utilruntime.Must(gwapiv1alpha2.Install(testScheme))
-	utilruntime.Must(gwapiv1beta1.Install(testScheme))
 	utilruntime.Must(cfv1alpha1.AddToScheme(testScheme))
 
 	// Find Gateway API CRDs and custom CRDs
@@ -361,18 +357,18 @@ func TestIntegration_ReferenceGrant(t *testing.T) {
 	}
 	t.Cleanup(func() { k8sClient.Delete(ctx, ns) })
 
-	grant := &gwapiv1beta1.ReferenceGrant{
+	grant := &gwapiv1.ReferenceGrant{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "allow-frontend-routes",
 			Namespace: "refgrant-backend",
 		},
-		Spec: gwapiv1beta1.ReferenceGrantSpec{
-			From: []gwapiv1beta1.ReferenceGrantFrom{{
+		Spec: gwapiv1.ReferenceGrantSpec{
+			From: []gwapiv1.ReferenceGrantFrom{{
 				Group:     "gateway.networking.k8s.io",
 				Kind:      "HTTPRoute",
 				Namespace: "default",
 			}},
-			To: []gwapiv1beta1.ReferenceGrantTo{{
+			To: []gwapiv1.ReferenceGrantTo{{
 				Group: "",
 				Kind:  "Service",
 			}},

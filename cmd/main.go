@@ -14,8 +14,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
-	gwapiv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
-	gwapiv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 )
 
 var scheme = runtime.NewScheme()
@@ -23,8 +21,6 @@ var scheme = runtime.NewScheme()
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(gwapiv1.Install(scheme))
-	utilruntime.Must(gwapiv1alpha2.Install(scheme))
-	utilruntime.Must(gwapiv1beta1.Install(scheme))
 	utilruntime.Must(cfv1alpha1.AddToScheme(scheme))
 }
 

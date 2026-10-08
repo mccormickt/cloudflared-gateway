@@ -15,7 +15,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
-	gwapiv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
 )
 
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;create;update;delete
@@ -427,8 +426,8 @@ func (r *GatewayReconciler) collectHTTPRoutes(ctx context.Context, gw *gwapiv1.G
 	return attached, nil
 }
 
-func (r *GatewayReconciler) collectTLSRoutes(ctx context.Context, gw *gwapiv1.Gateway) ([]gwapiv1alpha2.TLSRoute, error) {
-	var routeList gwapiv1alpha2.TLSRouteList
+func (r *GatewayReconciler) collectTLSRoutes(ctx context.Context, gw *gwapiv1.Gateway) ([]gwapiv1.TLSRoute, error) {
+	var routeList gwapiv1.TLSRouteList
 	if err := r.Client.List(ctx, &routeList); err != nil {
 		if apierrors.IsNotFound(err) || isNoMatchError(err) {
 			return nil, nil
@@ -436,7 +435,7 @@ func (r *GatewayReconciler) collectTLSRoutes(ctx context.Context, gw *gwapiv1.Ga
 		return nil, err
 	}
 
-	var attached []gwapiv1alpha2.TLSRoute
+	var attached []gwapiv1.TLSRoute
 	for _, route := range routeList.Items {
 		if !routeReferencesGateway(route.Spec.ParentRefs, gw) {
 			continue
@@ -505,8 +504,8 @@ func (r *GatewayReconciler) collectGRPCRoutes(ctx context.Context, gw *gwapiv1.G
 	return attached, nil
 }
 
-func (r *GatewayReconciler) collectTCPRoutes(ctx context.Context, gw *gwapiv1.Gateway) ([]gwapiv1alpha2.TCPRoute, error) {
-	var routeList gwapiv1alpha2.TCPRouteList
+func (r *GatewayReconciler) collectTCPRoutes(ctx context.Context, gw *gwapiv1.Gateway) ([]gwapiv1.TCPRoute, error) {
+	var routeList gwapiv1.TCPRouteList
 	if err := r.Client.List(ctx, &routeList); err != nil {
 		if apierrors.IsNotFound(err) || isNoMatchError(err) {
 			return nil, nil
@@ -514,7 +513,7 @@ func (r *GatewayReconciler) collectTCPRoutes(ctx context.Context, gw *gwapiv1.Ga
 		return nil, err
 	}
 
-	var attached []gwapiv1alpha2.TCPRoute
+	var attached []gwapiv1.TCPRoute
 	for _, route := range routeList.Items {
 		if !routeReferencesGateway(route.Spec.ParentRefs, gw) {
 			continue
@@ -544,7 +543,7 @@ func collectUnsupportedMatchRoutes(rules []cfclient.BuiltRule) map[string]bool {
 	return out
 }
 
-func computeListenerCounts(gw *gwapiv1.Gateway, httpRoutes []gwapiv1.HTTPRoute, grpcRoutes []gwapiv1.GRPCRoute, tlsRoutes []gwapiv1alpha2.TLSRoute, tcpRoutes []gwapiv1alpha2.TCPRoute) []ListenerRouteCount {
+func computeListenerCounts(gw *gwapiv1.Gateway, httpRoutes []gwapiv1.HTTPRoute, grpcRoutes []gwapiv1.GRPCRoute, tlsRoutes []gwapiv1.TLSRoute, tcpRoutes []gwapiv1.TCPRoute) []ListenerRouteCount {
 	counts := make([]ListenerRouteCount, 0, len(gw.Spec.Listeners))
 	for _, listener := range gw.Spec.Listeners {
 		var count int32

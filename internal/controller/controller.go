@@ -16,7 +16,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
-	gwapiv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
 )
 
 const (
@@ -70,7 +69,7 @@ func (r *GatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			builder.WithPredicates(predicate.GenerationChangedPredicate{}))
 
 	// TLSRoute watch is optional — CRD may not be installed
-	c = c.Watches(&gwapiv1alpha2.TLSRoute{},
+	c = c.Watches(&gwapiv1.TLSRoute{},
 		handler.EnqueueRequestsFromMapFunc(routeToGateways),
 		builder.WithPredicates(predicate.GenerationChangedPredicate{}))
 
@@ -80,7 +79,7 @@ func (r *GatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		builder.WithPredicates(predicate.GenerationChangedPredicate{}))
 
 	// TCPRoute watch is optional — CRD may not be installed
-	c = c.Watches(&gwapiv1alpha2.TCPRoute{},
+	c = c.Watches(&gwapiv1.TCPRoute{},
 		handler.EnqueueRequestsFromMapFunc(routeToGateways),
 		builder.WithPredicates(predicate.GenerationChangedPredicate{}))
 
@@ -135,9 +134,9 @@ func routeToGateways(_ context.Context, obj client.Object) []reconcile.Request {
 		parentRefs = route.Spec.ParentRefs
 	case *gwapiv1.GRPCRoute:
 		parentRefs = route.Spec.ParentRefs
-	case *gwapiv1alpha2.TLSRoute:
+	case *gwapiv1.TLSRoute:
 		parentRefs = route.Spec.ParentRefs
-	case *gwapiv1alpha2.TCPRoute:
+	case *gwapiv1.TCPRoute:
 		parentRefs = route.Spec.ParentRefs
 	default:
 		return nil

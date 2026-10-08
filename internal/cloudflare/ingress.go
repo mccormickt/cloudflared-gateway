@@ -9,7 +9,6 @@ import (
 	"time"
 
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
-	gwapiv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
 )
 
 // BuildTunnelToken assembles the cloudflared tunnel token.
@@ -99,7 +98,7 @@ func BuildGRPCIngressRules(routes []gwapiv1.GRPCRoute) []BuiltRule {
 
 // BuildTLSIngressRules converts TLSRoutes into Cloudflare tunnel ingress rules.
 // TLSRoutes map SNI hostnames to HTTPS backends with noTLSVerify.
-func BuildTLSIngressRules(routes []gwapiv1alpha2.TLSRoute) []BuiltRule {
+func BuildTLSIngressRules(routes []gwapiv1.TLSRoute) []BuiltRule {
 	var rules []BuiltRule
 
 	for i := range routes {
@@ -143,7 +142,7 @@ func BuildTLSIngressRules(routes []gwapiv1alpha2.TLSRoute) []BuiltRule {
 
 // BuildTCPIngressRules converts TCPRoutes into Cloudflare tunnel ingress rules.
 // TCPRoutes have no hostnames — they are port-based and map to tcp:// backends.
-func BuildTCPIngressRules(routes []gwapiv1alpha2.TCPRoute) []BuiltRule {
+func BuildTCPIngressRules(routes []gwapiv1.TCPRoute) []BuiltRule {
 	var rules []BuiltRule
 
 	for i := range routes {
