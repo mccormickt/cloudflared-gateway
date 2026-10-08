@@ -59,3 +59,36 @@ podLabels: {}
 
 # Extra env vars for the manager container (merged after CF creds).
 extraEnv: []
+
+# Experimental features.
+experimental:
+  backends:
+    # Enable support for the experimental Gateway API XBackend resource
+    # (gateway.networking.x-k8s.io), letting HTTPRoute/GRPCRoute/TLSRoute/TCPRoute
+    # target external FQDN destinations. Requires the XBackend CRD to be installed
+    # (the controller fails fast at startup otherwise).
+    enabled: false
+
+  # Opt-in: apply the standard Gateway API bundle via a pre-install/pre-upgrade
+  # hook Job. If backends.enabled is true, also apply only the XBackend CRD.
+  # Off by default: Gateway API resources are shared with other controllers and
+  # are not removed on uninstall. Only bundles previously applied by this hook
+  # under the same release name/fullname can be upgraded without ownership
+  # conflicts; manage manually installed bundles out of band.
+  # Requires Kubernetes >=1.30 and egress to github.com, raw.githubusercontent.com,
+  # and GitHub's release-asset CDN (e.g. release-assets.githubusercontent.com).
+  # The hook pod reuses imagePullSecrets, nodeSelector, tolerations,
+  # affinity.nodeAffinity, podSecurityContext, securityContext, and resources.
+  installGatewayAPICRDs: false
+
+  # Validated only when installGatewayAPICRDs is true: must be a GA v1 release
+  # >=v1.6.0, and a GA v1.6.x release when backends.enabled is also true.
+  gatewayAPIVersion: v1.6.3
+
+  # Image used by the CRD-install hook Job (must contain kubectl).
+  crdInstaller:
+    image: registry.k8s.io/kubectl:v1.34.1
+    # Explicitly allow taking field ownership from another CRD manager.
+    # Keep false unless the cluster administrator has deliberately approved
+    # that ownership transfer; it is never needed for routine upgrades.
+    forceConflicts: false

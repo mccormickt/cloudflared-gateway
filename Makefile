@@ -22,7 +22,7 @@ endif
 CONTROLLER_GEN := go tool controller-gen
 KO             ?= $(GOBIN)/ko
 
-.PHONY: build test test-unit test-integration test-e2e test-conformance test-all vet lint clean image setup-envtest install-crds install-xbackend-crd manifests generate run fmt ko ko-build ko-push chart-package chart-push dev-release install-kind kind-up kind-down kind-load kind-install kind-dev help
+.PHONY: build test test-unit test-chart test-integration test-e2e test-conformance test-all vet lint clean image setup-envtest install-crds install-xbackend-crd manifests generate chart-sync-crds run fmt ko ko-build ko-push chart-package chart-push dev-release install-kind kind-up kind-down kind-load kind-install kind-dev help
 
 build: ## Build the controller binary
 	go build -o bin/$(BINARY) ./cmd/
@@ -36,6 +36,10 @@ test: test-unit ## Run unit tests (default)
 
 test-unit: ## Run unit tests (no cluster required)
 	go test ./cmd/... ./internal/...
+
+test-chart: ## Check Helm CRD installation safety (requires Helm)
+	helm lint charts/cloudflared-gateway
+	bash scripts/test-chart.sh
 
 test-integration: ## Run envtest against standard, experimental, and standard plus XBackend
 	GATEWAY_API_TEST_CHANNEL=standard KUBEBUILDER_ASSETS=$(KUBEBUILDER_ASSETS) go test ./tests/integration/ -timeout 120s -v -count=1
@@ -59,6 +63,9 @@ manifests: ## Generate CRD and RBAC manifests from markers
 
 generate: ## Generate deepcopy methods
 	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./..."
+
+chart-sync-crds: ## Copy config/crd CRDs into the Helm chart's crds/ with chart naming
+	./scripts/sync-chart-crds.sh
 
 fmt: ## Format Go source files
 	go fmt ./...
