@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+go_version="$(awk '$1 == "go" {print $2}' go.mod)"
+if ! command -v go >/dev/null || [[ "$(go version)" != *"go${go_version} "* ]]; then
+  echo "Installing Go ${go_version}"
+  archive="$(mktemp)"
+  curl -fsSL "https://go.dev/dl/go${go_version}.linux-amd64.tar.gz" -o "$archive"
+  mkdir -p "$HOME/.local/lib/go-${go_version}"
+  tar -xzf "$archive" -C "$HOME/.local/lib/go-${go_version}" --strip-components=1
+  rm "$archive"
+  ln -sf "$HOME/.local/lib/go-${go_version}/bin/go" /usr/local/bin/go
+  ln -sf "$HOME/.local/lib/go-${go_version}/bin/gofmt" /usr/local/bin/gofmt
+fi
+
+if ! command -v helm >/dev/null; then
+  echo "Installing Helm v3.22.0"
+  archive="$(mktemp)"
+  curl -fsSL https://get.helm.sh/helm-v3.22.0-linux-amd64.tar.gz -o "$archive"
+  tar -xzf "$archive" -C /usr/local/bin --strip-components=1 linux-amd64/helm
+  rm "$archive"
+fi
+
+echo "Downloading Go modules"
+go mod download
+
+echo "Installing envtest tools and API server binaries"
+GOBIN=/usr/local/bin make setup-envtest

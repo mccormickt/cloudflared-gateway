@@ -5,12 +5,11 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
-	gwapiv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
 )
 
 // validPolicyTargets returns the set of target keys (kind/name) a policy may
 // validly attach to for this Gateway: the Gateway itself and every attached route.
-func validPolicyTargets(gw *gwapiv1.Gateway, http []gwapiv1.HTTPRoute, grpc []gwapiv1.GRPCRoute, tls []gwapiv1alpha2.TLSRoute, tcp []gwapiv1alpha2.TCPRoute) map[string]bool {
+func validPolicyTargets(gw *gwapiv1.Gateway, http []gwapiv1.HTTPRoute, grpc []gwapiv1.GRPCRoute, tls []gwapiv1.TLSRoute, tcp []gwapiv1.TCPRoute) map[string]bool {
 	valid := map[string]bool{targetKey("Gateway", gw.Name): true}
 	for i := range http {
 		valid[targetKey("HTTPRoute", http[i].Name)] = true

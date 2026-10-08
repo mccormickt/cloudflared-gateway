@@ -25,9 +25,9 @@ func TestMain(m *testing.M) {
 	testenv.Setup(
 		envfuncs.CreateCluster(kind.NewProvider(), kindClusterName),
 		func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
-			// Install Gateway API CRDs (experimental, includes TLSRoute)
+			// Install the standard Gateway API bundle, including TLSRoute and TCPRoute.
 			cmd := exec.CommandContext(ctx, "kubectl", "apply", "--server-side", "-f",
-				fmt.Sprintf("https://github.com/kubernetes-sigs/gateway-api/releases/download/%s/experimental-install.yaml", gatewayAPIVersion()))
+				fmt.Sprintf("https://github.com/kubernetes-sigs/gateway-api/releases/download/%s/standard-install.yaml", gatewayAPIVersion()))
 			if out, err := cmd.CombinedOutput(); err != nil {
 				return ctx, fmt.Errorf("installing Gateway API CRDs: %s: %w", string(out), err)
 			}

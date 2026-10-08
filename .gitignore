@@ -10,3 +10,6 @@ bin/
 # Release artifacts
 dist/
 chart-dist/
+
+# Orb portal metadata
+.amp/portals/

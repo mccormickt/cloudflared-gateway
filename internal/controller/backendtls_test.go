@@ -9,7 +9,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
-	gwapiv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
 )
 
 func makeBackendTLSPolicy(name, namespace, serviceName string, hostname string, wellKnownCA *gwapiv1.WellKnownCACertificatesType) *gwapiv1.BackendTLSPolicy {
@@ -177,11 +176,11 @@ func TestApplyBackendTLSPolicies(t *testing.T) {
 	}
 
 	p := gwapiv1.PortNumber(8443)
-	tlsRoutes := []gwapiv1alpha2.TLSRoute{{
+	tlsRoutes := []gwapiv1.TLSRoute{{
 		ObjectMeta: metav1.ObjectMeta{Name: "tls-route", Namespace: "default"},
-		Spec: gwapiv1alpha2.TLSRouteSpec{
+		Spec: gwapiv1.TLSRouteSpec{
 			Hostnames: []gwapiv1.Hostname{"secure.example.com"},
-			Rules: []gwapiv1alpha2.TLSRouteRule{{
+			Rules: []gwapiv1.TLSRouteRule{{
 				BackendRefs: []gwapiv1.BackendRef{{
 					BackendObjectReference: gwapiv1.BackendObjectReference{
 						Name: "tls-svc",

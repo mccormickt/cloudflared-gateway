@@ -15,11 +15,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
-	gwapiv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
 )
 
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;create;update;delete
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
+// +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;create;update;delete
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways,verbs=get;list;watch;update
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways/status,verbs=get;update;patch
@@ -36,6 +37,8 @@ import (
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=tcproutes/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=referencegrants,verbs=get;list;watch
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=backendtlspolicies,verbs=get;list;watch
+// +kubebuilder:rbac:groups=gateway.networking.x-k8s.io,resources=xbackends,verbs=get;list;watch
+// +kubebuilder:rbac:groups=gateway.networking.x-k8s.io,resources=xbackends/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=cloudflare.jan0ski.net,resources=cloudflareaccesspolicies,verbs=get;list;watch
 // +kubebuilder:rbac:groups=cloudflare.jan0ski.net,resources=cloudflareaccesspolicies/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=cloudflare.jan0ski.net,resources=cloudflareoriginpolicies,verbs=get;list;watch
@@ -206,13 +209,35 @@ func (r *GatewayReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *
 		return KubeError(err)
 	}
 
+	// Resolve every attached route's backendRefs once. Native Service refs are
+	// checked for existence and cross-namespace authorization; XBackends are only
+	// fetched when the experimental feature is enabled, though the resolver still
+	// recognizes XBackend refs when disabled so they fail closed
+	// (an error response + ResolvedRefs=False) rather than being mistaken for
+	// in-cluster Services.
+	backendTargets := collectBackendTargets(httpRoutes, grpcRoutes, tlsRoutes, tcpRoutes)
+
+	svcCol, err := r.collectServiceBackends(ctx, backendTargets)
+	if err != nil {
+		return KubeError(err)
+	}
+
+	var xbCol *xbBackends
+	if r.ExperimentalBackends {
+		xbCol, err = r.collectReferencedXBackends(ctx, backendTargets)
+		if err != nil {
+			return KubeError(err)
+		}
+	}
+	resolve := r.backendResolver(xbCol, svcCol)
+
 	// Build ingress rules. HTTP and gRPC share Cloudflare's hostname+path match
 	// space and can shadow each other, so they are merged and sorted into Gateway
 	// API precedence order (most-specific first) as a single band; TLS then TCP
 	// follow, then the mandatory catch-all. Policy is attached by route identity,
 	// not rule position, so the sort is safe.
-	l7 := cfclient.BuildIngressRules(httpRoutes)
-	l7 = append(l7, cfclient.BuildGRPCIngressRules(grpcRoutes)...)
+	l7 := cfclient.BuildIngressRules(httpRoutes, resolve)
+	l7 = append(l7, cfclient.BuildGRPCIngressRules(grpcRoutes, resolve)...)
 	l7, err = r.applyAccessPolicies(ctx, l7, gw)
 	if err != nil {
 		return KubeError(err)
@@ -220,14 +245,14 @@ func (r *GatewayReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *
 	applyOriginPolicies(originPolicies, gw.Name, l7)
 	cfclient.SortByPrecedence(l7)
 
-	tlsRules := cfclient.BuildTLSIngressRules(tlsRoutes)
+	tlsRules := cfclient.BuildTLSIngressRules(tlsRoutes, resolve)
 	tlsRules, err = r.applyBackendTLSPolicies(ctx, tlsRules, tlsRoutes)
 	if err != nil {
 		return KubeError(err)
 	}
 	applyOriginPolicies(originPolicies, gw.Name, tlsRules)
 
-	tcpRules := cfclient.BuildTCPIngressRules(tcpRoutes)
+	tcpRules := cfclient.BuildTCPIngressRules(tcpRoutes, resolve)
 	applyOriginPolicies(originPolicies, gw.Name, tcpRules)
 
 	ingress := make([]cfclient.IngressRule, 0, len(l7)+len(tlsRules)+len(tcpRules)+1)
@@ -263,7 +288,8 @@ func (r *GatewayReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *
 	// kinds (access, origin) directly target it.
 	for i := range httpRoutes {
 		key := targetKey("HTTPRoute", httpRoutes[i].Name)
-		if err := PatchHTTPRouteStatus(ctx, r.Client, &httpRoutes[i], gw.Name, gw.Namespace, true, accessAffected[key], originAffected[key], unsupportedRoutes[key]); err != nil {
+		resolved := r.routeResolvedRefs(httpRoutes[i].Namespace, "HTTPRoute", httpRouteObjRefs(&httpRoutes[i]), xbCol, svcCol)
+		if err := PatchHTTPRouteStatus(ctx, r.Client, &httpRoutes[i], gw.Name, gw.Namespace, true, accessAffected[key], originAffected[key], unsupportedRoutes[key], resolved); err != nil {
 			logger.Error(err, "Failed to patch HTTPRoute status", "route", httpRoutes[i].Name)
 			if statusErr == nil {
 				statusErr = err
@@ -272,7 +298,8 @@ func (r *GatewayReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *
 	}
 	for i := range grpcRoutes {
 		key := targetKey("GRPCRoute", grpcRoutes[i].Name)
-		if err := PatchGRPCRouteStatus(ctx, r.Client, &grpcRoutes[i], gw.Name, gw.Namespace, true, accessAffected[key], originAffected[key], unsupportedRoutes[key]); err != nil {
+		resolved := r.routeResolvedRefs(grpcRoutes[i].Namespace, "GRPCRoute", grpcRouteObjRefs(&grpcRoutes[i]), xbCol, svcCol)
+		if err := PatchGRPCRouteStatus(ctx, r.Client, &grpcRoutes[i], gw.Name, gw.Namespace, true, accessAffected[key], originAffected[key], unsupportedRoutes[key], resolved); err != nil {
 			logger.Error(err, "Failed to patch GRPCRoute status", "route", grpcRoutes[i].Name)
 			if statusErr == nil {
 				statusErr = err
@@ -281,7 +308,8 @@ func (r *GatewayReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *
 	}
 	for i := range tlsRoutes {
 		key := targetKey("TLSRoute", tlsRoutes[i].Name)
-		if err := PatchTLSRouteStatus(ctx, r.Client, &tlsRoutes[i], gw.Name, gw.Namespace, true, accessAffected[key], originAffected[key]); err != nil {
+		resolved := r.routeResolvedRefs(tlsRoutes[i].Namespace, "TLSRoute", tlsRouteObjRefs(&tlsRoutes[i]), xbCol, svcCol)
+		if err := PatchTLSRouteStatus(ctx, r.Client, &tlsRoutes[i], gw.Name, gw.Namespace, true, accessAffected[key], originAffected[key], resolved); err != nil {
 			logger.Error(err, "Failed to patch TLSRoute status", "route", tlsRoutes[i].Name)
 			if statusErr == nil {
 				statusErr = err
@@ -290,11 +318,21 @@ func (r *GatewayReconciler) apply(ctx context.Context, gw *gwapiv1.Gateway, gc *
 	}
 	for i := range tcpRoutes {
 		key := targetKey("TCPRoute", tcpRoutes[i].Name)
-		if err := PatchTCPRouteStatus(ctx, r.Client, &tcpRoutes[i], gw.Name, gw.Namespace, true, accessAffected[key], originAffected[key]); err != nil {
+		resolved := r.routeResolvedRefs(tcpRoutes[i].Namespace, "TCPRoute", tcpRouteObjRefs(&tcpRoutes[i]), xbCol, svcCol)
+		if err := PatchTCPRouteStatus(ctx, r.Client, &tcpRoutes[i], gw.Name, gw.Namespace, true, accessAffected[key], originAffected[key], resolved); err != nil {
 			logger.Error(err, "Failed to patch TCPRoute status", "route", tcpRoutes[i].Name)
 			if statusErr == nil {
 				statusErr = err
 			}
+		}
+	}
+
+	// Patch XBackend ancestor status for the backends this Gateway serves
+	// (and prune stale ancestor entries). No-op when experimental support is off.
+	if err := r.patchXBackendStatuses(ctx, gw, xbCol); err != nil {
+		logger.Error(err, "Failed to patch XBackend statuses")
+		if statusErr == nil {
+			statusErr = err
 		}
 	}
 
@@ -375,9 +413,12 @@ func (r *GatewayReconciler) cleanup(ctx context.Context, gw *gwapiv1.Gateway) er
 		}
 	}
 
-	// Prune this Gateway from policy ancestor status (best-effort; does not block
-	// finalizer removal).
+	// Prune this Gateway from policy and XBackend ancestor status (best-effort;
+	// does not block finalizer removal).
 	r.prunePolicyAncestorStatus(ctx, gw)
+	if err := r.pruneXBackendAncestorStatus(ctx, gw); err != nil {
+		logger.Error(err, "Cleanup: failed to prune XBackend ancestor status")
+	}
 
 	return firstErr
 }
@@ -427,8 +468,8 @@ func (r *GatewayReconciler) collectHTTPRoutes(ctx context.Context, gw *gwapiv1.G
 	return attached, nil
 }
 
-func (r *GatewayReconciler) collectTLSRoutes(ctx context.Context, gw *gwapiv1.Gateway) ([]gwapiv1alpha2.TLSRoute, error) {
-	var routeList gwapiv1alpha2.TLSRouteList
+func (r *GatewayReconciler) collectTLSRoutes(ctx context.Context, gw *gwapiv1.Gateway) ([]gwapiv1.TLSRoute, error) {
+	var routeList gwapiv1.TLSRouteList
 	if err := r.Client.List(ctx, &routeList); err != nil {
 		if apierrors.IsNotFound(err) || isNoMatchError(err) {
 			return nil, nil
@@ -436,7 +477,7 @@ func (r *GatewayReconciler) collectTLSRoutes(ctx context.Context, gw *gwapiv1.Ga
 		return nil, err
 	}
 
-	var attached []gwapiv1alpha2.TLSRoute
+	var attached []gwapiv1.TLSRoute
 	for _, route := range routeList.Items {
 		if !routeReferencesGateway(route.Spec.ParentRefs, gw) {
 			continue
@@ -505,8 +546,8 @@ func (r *GatewayReconciler) collectGRPCRoutes(ctx context.Context, gw *gwapiv1.G
 	return attached, nil
 }
 
-func (r *GatewayReconciler) collectTCPRoutes(ctx context.Context, gw *gwapiv1.Gateway) ([]gwapiv1alpha2.TCPRoute, error) {
-	var routeList gwapiv1alpha2.TCPRouteList
+func (r *GatewayReconciler) collectTCPRoutes(ctx context.Context, gw *gwapiv1.Gateway) ([]gwapiv1.TCPRoute, error) {
+	var routeList gwapiv1.TCPRouteList
 	if err := r.Client.List(ctx, &routeList); err != nil {
 		if apierrors.IsNotFound(err) || isNoMatchError(err) {
 			return nil, nil
@@ -514,7 +555,7 @@ func (r *GatewayReconciler) collectTCPRoutes(ctx context.Context, gw *gwapiv1.Ga
 		return nil, err
 	}
 
-	var attached []gwapiv1alpha2.TCPRoute
+	var attached []gwapiv1.TCPRoute
 	for _, route := range routeList.Items {
 		if !routeReferencesGateway(route.Spec.ParentRefs, gw) {
 			continue
@@ -544,7 +585,7 @@ func collectUnsupportedMatchRoutes(rules []cfclient.BuiltRule) map[string]bool {
 	return out
 }
 
-func computeListenerCounts(gw *gwapiv1.Gateway, httpRoutes []gwapiv1.HTTPRoute, grpcRoutes []gwapiv1.GRPCRoute, tlsRoutes []gwapiv1alpha2.TLSRoute, tcpRoutes []gwapiv1alpha2.TCPRoute) []ListenerRouteCount {
+func computeListenerCounts(gw *gwapiv1.Gateway, httpRoutes []gwapiv1.HTTPRoute, grpcRoutes []gwapiv1.GRPCRoute, tlsRoutes []gwapiv1.TLSRoute, tcpRoutes []gwapiv1.TCPRoute) []ListenerRouteCount {
 	counts := make([]ListenerRouteCount, 0, len(gw.Spec.Listeners))
 	for _, listener := range gw.Spec.Listeners {
 		var count int32
