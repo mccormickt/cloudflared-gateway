@@ -1,7 +1,9 @@
 package main
 
 import (
+	"flag"
 	"os"
+	"strconv"
 
 	cfv1alpha1 "github.com/mccormickt/cloudflared-gateway/api/v1alpha1"
 	"github.com/mccormickt/cloudflared-gateway/internal/cloudflare"
@@ -14,6 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
+	apisxv1alpha1 "sigs.k8s.io/gateway-api/apisx/v1alpha1"
 )
 
 var scheme = runtime.NewScheme()
@@ -21,10 +24,31 @@ var scheme = runtime.NewScheme()
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(gwapiv1.Install(scheme))
+	utilruntime.Must(apisxv1alpha1.Install(scheme))
 	utilruntime.Must(cfv1alpha1.AddToScheme(scheme))
 }
 
+// envBool reads a boolean environment variable, returning def when unset or
+// unparseable.
+func envBool(key string, def bool) bool {
+	v, ok := os.LookupEnv(key)
+	if !ok {
+		return def
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return def
+	}
+	return b
+}
+
 func main() {
+	enableExperimentalBackends := flag.Bool("enable-experimental-backends",
+		envBool("ENABLE_EXPERIMENTAL_BACKENDS", false),
+		"Enable support for the experimental Gateway API XBackend resource "+
+			"(gateway.networking.x-k8s.io), letting routes target external FQDN destinations.")
+	flag.Parse()
+
 	ctrl.SetLogger(zap.New())
 	logger := ctrl.Log.WithName(controller.ControllerName)
 
@@ -47,8 +71,9 @@ func main() {
 	}
 
 	reconciler := &controller.GatewayReconciler{
-		CloudflareClient: cfClient,
-		ControllerName:   gwapiv1.GatewayController(controller.ControllerName),
+		CloudflareClient:     cfClient,
+		ControllerName:       gwapiv1.GatewayController(controller.ControllerName),
+		ExperimentalBackends: *enableExperimentalBackends,
 	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		logger.Error(err, "Error setting up controller")

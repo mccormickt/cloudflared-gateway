@@ -91,17 +91,35 @@ func (r *GatewayReconciler) applyBackendTLSPolicies(ctx context.Context, rules [
 	}
 	hostnameToBackend := make(map[string]backendKey)
 
+	// TLS rules built from an XBackend ref, keyed by route identity + rule index.
+	// Their origin comes from the XBackend's own spec (see translateXBackend) and
+	// must not be replaced: BackendTLSPolicy only targets Services, and the
+	// no-policy fallback in GetBackendTLSConfig is noTLSVerify: true, which would
+	// silently disable origin certificate verification for an external HTTPS
+	// destination. The hostname key alone is not enough, since another TLSRoute
+	// may claim the same hostname with a Service backend.
+	type ruleKey struct {
+		namespace string
+		name      string
+		index     int
+	}
+	externalRules := make(map[ruleKey]bool)
+
 	for i := range tlsRoutes {
 		route := &tlsRoutes[i]
 		routeNS := route.Namespace
 		if routeNS == "" {
 			routeNS = "default"
 		}
-		for _, rule := range route.Spec.Rules {
+		for ri, rule := range route.Spec.Rules {
 			if len(rule.BackendRefs) == 0 {
 				continue
 			}
 			ref := rule.BackendRefs[0]
+			if isXBackendRef(ref.BackendObjectReference) {
+				externalRules[ruleKey{routeNS, route.Name, ri}] = true
+				continue
+			}
 			ns := routeNS
 			if ref.Namespace != nil {
 				ns = string(*ref.Namespace)
@@ -126,6 +144,9 @@ func (r *GatewayReconciler) applyBackendTLSPolicies(ctx context.Context, rules [
 
 	// Override originRequest for matching rules
 	for i := range rules {
+		if externalRules[ruleKey{rules[i].RouteNamespace, rules[i].RouteName, rules[i].RuleIndex}] {
+			continue
+		}
 		bk, ok := hostnameToBackend[rules[i].Hostname]
 		if !ok {
 			continue

@@ -7,15 +7,18 @@ import (
 	cfv1alpha1 "github.com/mccormickt/cloudflared-gateway/api/v1alpha1"
 	"github.com/mccormickt/cloudflared-gateway/internal/cloudflare"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
+	apisxv1alpha1 "sigs.k8s.io/gateway-api/apisx/v1alpha1"
 )
 
 const (
@@ -29,6 +32,13 @@ type GatewayReconciler struct {
 	Client           client.Client
 	CloudflareClient cloudflare.APIClient
 	ControllerName   gwapiv1.GatewayController
+
+	// ExperimentalBackends enables support for the experimental Gateway API
+	// XBackend resource (gateway.networking.x-k8s.io), letting routes target
+	// external FQDN destinations. When false, routes referencing an XBackend
+	// are rejected (ResolvedRefs=False, InvalidKind) and no XBackend watch or
+	// API access occurs.
+	ExperimentalBackends bool
 }
 
 var _ reconcile.Reconciler = &GatewayReconciler{}
@@ -68,7 +78,7 @@ func (r *GatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(routeToGateways),
 			builder.WithPredicates(predicate.GenerationChangedPredicate{}))
 
-	// TLSRoute watch is optional — CRD may not be installed
+	// TLSRoute watch — v1 stable
 	c = c.Watches(&gwapiv1.TLSRoute{},
 		handler.EnqueueRequestsFromMapFunc(routeToGateways),
 		builder.WithPredicates(predicate.GenerationChangedPredicate{}))
@@ -78,10 +88,25 @@ func (r *GatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		handler.EnqueueRequestsFromMapFunc(routeToGateways),
 		builder.WithPredicates(predicate.GenerationChangedPredicate{}))
 
-	// TCPRoute watch is optional — CRD may not be installed
+	// TCPRoute watch — v1 stable
 	c = c.Watches(&gwapiv1.TCPRoute{},
 		handler.EnqueueRequestsFromMapFunc(routeToGateways),
 		builder.WithPredicates(predicate.GenerationChangedPredicate{}))
+
+	// ReferenceGrant watch — cross-namespace backendRefs (Service and XBackend)
+	// are authorized against ReferenceGrants, so creating one must start serving
+	// the route and deleting one must stop serving it. No generation predicate:
+	// a grant's spec is its entire meaning.
+	c = c.Watches(&gwapiv1.ReferenceGrant{},
+		handler.EnqueueRequestsFromMapFunc(r.allGatewaysRequests))
+
+	// Service creation and deletion change whether backend references resolve.
+	c = c.Watches(&corev1.Service{},
+		handler.EnqueueRequestsFromMapFunc(r.serviceToGateways),
+		builder.WithPredicates(predicate.Funcs{
+			UpdateFunc:  func(event.UpdateEvent) bool { return false },
+			GenericFunc: func(event.GenericEvent) bool { return false },
+		}))
 
 	// BackendTLSPolicy watch — re-enqueue all Gateways on policy changes
 	c = c.Watches(&gwapiv1.BackendTLSPolicy{},
@@ -99,6 +124,17 @@ func (r *GatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// referenced cluster-wide (GatewayClass) or per-Gateway (infrastructure).
 	c = c.Watches(&cfv1alpha1.CloudflareTunnelConfig{},
 		handler.EnqueueRequestsFromMapFunc(r.allGatewaysRequests))
+
+	// XBackend watch — only when experimental support is enabled, since the CRD
+	// may not be installed otherwise. Re-enqueue all Gateways; an XBackend may be
+	// referenced by routes attached to any Gateway.
+	// Gated on generation so the controller's own ancestor-status writes don't
+	// re-enqueue every Gateway (XBackend has a status subresource).
+	if r.ExperimentalBackends {
+		c = c.Watches(&apisxv1alpha1.XBackend{},
+			handler.EnqueueRequestsFromMapFunc(r.allGatewaysRequests),
+			builder.WithPredicates(predicate.GenerationChangedPredicate{}))
+	}
 
 	if err := c.Complete(r); err != nil {
 		return fmt.Errorf("building controller: %w", err)
