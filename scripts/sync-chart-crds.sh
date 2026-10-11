@@ -33,3 +33,18 @@ for src in "${SRC_DIR}"/*.yaml; do
   cp "${src}" "${DST_DIR}/${name}.yaml"
   echo "synced ${src} -> ${DST_DIR}/${name}.yaml"
 done
+
+# Vendor the experimental bundle from the same pinned module as the controller.
+GATEWAY_MODULE="$(go list -m -f '{{.Dir}}' sigs.k8s.io/gateway-api)"
+GATEWAY_SRC="${GATEWAY_MODULE}/config/crd/experimental"
+GATEWAY_DST="charts/cloudflared-gateway/charts/gateway-api-crds"
+mkdir -p "${GATEWAY_DST}/crds" "${GATEWAY_DST}/files"
+install -m 644 "${GATEWAY_MODULE}/LICENSE" "${GATEWAY_DST}/LICENSE"
+rm -f "${GATEWAY_DST}/crds/"*.yaml
+for src in "${GATEWAY_SRC}/"*.yaml; do
+  case "${src}" in
+    */kustomization.yaml) ;;
+    *_vap_safeupgrades.yaml) install -m 644 "${src}" "${GATEWAY_DST}/files/safe-upgrades.yaml" ;;
+    *) install -m 644 "${src}" "${GATEWAY_DST}/crds/" ;;
+  esac
+done

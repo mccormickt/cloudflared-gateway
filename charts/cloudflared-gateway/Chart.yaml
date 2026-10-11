@@ -16,3 +16,7 @@ keywords:
 maintainers:
   - name: Tommy McCormick
     email: mccormickt9@gmail.com
+dependencies:
+  - name: gateway-api-crds
+    version: 1.6.3
+    condition: gatewayAPI.enabled

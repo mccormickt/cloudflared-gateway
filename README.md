@@ -292,37 +292,20 @@ not enable features dynamically. A missing XBackend object on an enabled control
 reports `ResolvedRefs=False` / `BackendNotFound`. HTTPRoute serves 500; other route
 kinds use 503.
 
-For a new cluster, the optional Helm hook can install the standard bundle plus
-XBackend: `--set experimental.installGatewayAPICRDs=true --set experimental.backends.enabled=true`.
-It uses `experimental.gatewayAPIVersion` (default `v1.6.3`). When the hook is
-enabled, rendering requires a GA v1 release >=v1.6.0 (older bundles lack required
-`v1` APIs) and, when installing XBackend, a GA v1.6.x release; with the hook
-disabled the value is not validated. The hook requires Kubernetes >=1.30 for
-stable admission-policy APIs and outbound access to `github.com`,
-`raw.githubusercontent.com`, and GitHub's release-asset CDN (for example
-`release-assets.githubusercontent.com`). Its pod reuses the chart's
-`imagePullSecrets`, `nodeSelector`, `tolerations`, `affinity.nodeAffinity`, and
-`resources`, but has its own `app.kubernetes.io/name` label, so controller
-NetworkPolicies do not grant it egress. This grants a temporary Job
-permission to manage CRDs and Gateway API's safe-upgrade admission policies.
-These are **cluster-wide, shared resources**, are not owned by the Helm release,
-and remain after uninstall. On clusters with another CRD manager or an experimental
-bundle, leave this hook disabled and have the cluster administrator install or
-upgrade XBackend out of band.
+For a new cluster, the optional Helm dependency can install the v1.6.3
+experimental bundle: `--set gatewayAPI.enabled=true --set experimental.backends.enabled=true`.
+It requires Kubernetes >=1.30 and uses the Helm caller's permissions. No pod
+receives CRD or admission-policy write permissions, and no installer Job runs.
+The bundle is vendored, so installation does not fetch manifests over the network.
+With Helm 4, also pass `--server-side=false` to preserve existing CRD ownership.
 
-The hook server-side applies with its own field manager (`<fullname>-crd-install`),
-so it can upgrade without ownership conflicts only bundles it applied earlier
-under the same release name and fullname. Manually installed bundles, a changed
-release name, or a changed `fullnameOverride` leave the previous field owner in
-place: keep upgrading those bundles out of band, or have an administrator
-explicitly approve the ownership transfer. `experimental.crdInstaller.forceConflicts=true`
-is only for that deliberate, one-off action, not a recommended fix; the chart never
-adopts existing bundles silently. Upstream safe-upgrade policies do not block a
-standard bundle from replacing experimental schemas. Do not change channels or
-bypass those policies. Helm rollback does not undo CRD changes. A failed hook Job
-and its RBAC remain after uninstall or disabling the hook; see the
-[chart README](charts/cloudflared-gateway/README.md#optional-gateway-api-crd-install-hook)
-for log and cleanup commands.
+Gateway API CRDs and safe-upgrade policies are **cluster-wide, shared resources**.
+Leave `gatewayAPI.enabled=false` when a cluster administrator already manages
+them. Helm does not upgrade or remove CRDs; upgrade them separately before the
+controller. Safe-upgrade policies remain after uninstall. Do not force ownership
+conflicts, change channels, or bypass admission protections. See the
+[chart README](charts/cloudflared-gateway/README.md#gateway-api-ownership) for
+ownership, GitOps, upgrade, and migration guidance.
 
 Mapping and limitations:
 

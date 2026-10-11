@@ -1,0 +1,23 @@
+{{- if not (semverCompare ">=1.30.0-0" .Capabilities.KubeVersion.Version) }}
+{{- fail "the bundled Gateway API safe-upgrade policies require Kubernetes 1.30+; install Gateway API separately on older clusters" }}
+{{- end }}
+{{- $name := "safe-upgrades.gateway.networking.k8s.io" }}
+{{- $policy := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicy" "" $name }}
+{{- $binding := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicyBinding" "" $name }}
+{{- $manage := true }}
+{{- range $resource := list $policy $binding }}
+  {{- if $resource }}
+    {{- $annotations := $resource.metadata.annotations | default dict }}
+    {{- if or (ne (get $annotations "meta.helm.sh/release-name") $.Release.Name) (ne (get $annotations "meta.helm.sh/release-namespace") $.Release.Namespace) }}
+      {{- $manage = false }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+{{- if $manage }}
+  {{- range $document := splitList "\n---\n" (.Files.Get "files/safe-upgrades.yaml") }}
+    {{- $resource := fromYaml $document }}
+    {{- $_ := set $resource.metadata.annotations "helm.sh/resource-policy" "keep" }}
+---
+{{ toYaml $resource }}
+  {{- end }}
+{{- end }}
