@@ -10,6 +10,10 @@ on:
         description: "Tag to release (e.g. v0.1.0)"
         required: true
         type: string
+      chart_only:
+        description: "Publish the chart from an existing GitHub Release"
+        default: false
+        type: boolean
 
 jobs:
   release:
@@ -50,6 +54,7 @@ jobs:
         run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
 
       - name: Run GoReleaser
+        if: ${{ !inputs.chart_only }}
         uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
@@ -58,7 +63,18 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Publish + sign Helm chart
-        run: bash scripts/publish-chart.sh "${GITHUB_REF_NAME#v}"
+      - name: Download existing release chart
+        if: ${{ inputs.chart_only }}
+        run: |
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "cloudflared-gateway-${RELEASE_TAG#v}.tgz" \
+            --pattern checksums.txt --dir chart-dist
+          (cd chart-dist && sha256sum --check --ignore-missing checksums.txt)
         env:
-          GITHUB_REF_NAME: ${{ github.event.inputs.tag || github.ref_name }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.tag }}
+
+      - name: Publish + sign Helm chart
+        run: bash scripts/publish-chart.sh "${RELEASE_TAG#v}"
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
