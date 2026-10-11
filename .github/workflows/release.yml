@@ -66,10 +66,13 @@ jobs:
       - name: Download existing release chart
         if: ${{ inputs.chart_only }}
         run: |
+          CHART="cloudflared-gateway-${RELEASE_TAG#v}.tgz"
           gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-            --pattern "cloudflared-gateway-${RELEASE_TAG#v}.tgz" \
-            --pattern checksums.txt --dir chart-dist
-          (cd chart-dist && sha256sum --check --ignore-missing checksums.txt)
+            --pattern "$CHART" --dir chart-dist
+          DIGEST="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
+            | jq -r --arg name "$CHART" '.assets[] | select(.name == $name) | .digest')"
+          [[ "$DIGEST" == sha256:* ]]
+          printf '%s  %s\n' "${DIGEST#sha256:}" "chart-dist/$CHART" | sha256sum --check --strict
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ inputs.tag }}
