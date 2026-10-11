@@ -138,6 +138,7 @@ The full chart value reference lives in [`charts/cloudflared-gateway/values.yaml
 | `cloudflare.existingSecret` | Name of a pre-existing Secret with `account-id` and `api-token` keys |
 | `controllerName` | `GatewayClass.spec.controllerName` value the controller claims (default: `jan0ski.net/cloudflared-gateway`) |
 | `resources` | Pod resource requests and limits |
+| `dns.enabled` | Manage proxied CNAME records for attached route hostnames (default: `false`) |
 
 ### Backend references
 
@@ -176,6 +177,62 @@ Fields owned by other mechanisms are intentionally not exposed here: Access (`Cl
 ### Tunnel infrastructure (CloudflareTunnelConfig)
 
 The cloudflared Deployment is customized with the `CloudflareTunnelConfig` CRD, referenced via `GatewayClass.spec.parametersRef` (cluster-wide default) or `Gateway.spec.infrastructure.parametersRef` (per-Gateway override). It exposes `replicas`, `image`, `resources`, `logLevel`, `metricsPort`, pod labels/annotations, and scheduling (`nodeSelector`/`tolerations`/`affinity`). The pod security context is always fixed by the controller. See [`examples/cloudflare-tunnel-config.yaml`](examples/cloudflare-tunnel-config.yaml).
+
+### DNS management
+
+Each public route hostname needs a **proxied CNAME** to
+`<tunnelID>.cfargotunnel.com`. The controller publishes this target in
+`Gateway.status.addresses` as a `Hostname` address. Choose one DNS owner:
+
+- **ExternalDNS (recommended for shared clusters):** use its
+  [Gateway route sources](https://kubernetes-sigs.github.io/external-dns/latest/docs/sources/gateway/)
+  and Cloudflare provider. It reads accepted route hostnames and the parent
+  Gateway's address; backend Service ClusterIPs are not public DNS targets.
+  Keep `dns.enabled=false`. Example ExternalDNS arguments:
+
+  ```yaml
+  - --source=gateway-httproute
+  - --source=gateway-grpcroute
+  - --source=gateway-tlsroute
+  - --provider=cloudflare
+  - --cloudflare-proxied
+  - --domain-filter=example.com
+  - --registry=txt
+  - --txt-owner-id=my-cluster-cloudflared
+  - --txt-prefix=_external-dns.
+  - --policy=upsert-only
+  ```
+
+  Use a version that supports the installed Gateway API CRDs. Scope the
+  sources to the intended Gateways, namespaces, or route labels. A unique TXT
+  owner ID and prefix separate ownership records from CNAMEs. `upsert-only`
+  does not delete stale records; use `sync` only when deletion is intended.
+  Configure DNS credentials separately from the tunnel controller.
+
+- **Controller-managed DNS (opt-in):** set `dns.enabled=true`,
+  `--enable-dns-management`, or `ENABLE_DNS_MANAGEMENT=true`. The API token
+  needs `Zone:Read` and `Zone:DNS:Edit` for the zones in the configured account,
+  in addition to tunnel permissions. An explicit flag overrides the environment;
+  invalid environment booleans stop startup.
+
+Controller-managed DNS uses the effective HTTPRoute, GRPCRoute, and TLSRoute
+hostnames after parent listener selection, namespace/kind checks, and hostname
+intersection. It creates proxied CNAMEs with automatic TTL and an owner comment
+(`cloudflared-gateway:owner=<gateway-uid>`). It updates or deletes only records
+with that marker. Existing unowned CNAMEs are not adopted; a collision reports
+`Programmed=False` with reason `DNSNotReady` and retries. DNS API errors also
+report `DNSNotReady`. Stale owned records are removed when routes change, and
+Gateway deletion retains the finalizer until owned DNS records are removed.
+
+Wildcard hostnames and hostnames outside accessible zones are skipped and logged;
+manage them separately. TCPRoutes have no hostname field and do not create DNS
+records. Annotate a Gateway with
+`cloudflared-gateway.jan0ski.net/dns-managed: "false"` to stop DNS reconciliation
+for it; this leaves its existing records in place. With the controller-wide flag
+enabled, Gateway deletion still cleans up its owned records.
+
+**Do not let ExternalDNS and the controller manage the same hostname.** DNS
+management is independent of Cloudflare Access; it does not add an Access policy.
 
 ## CloudflareAccessPolicy
 

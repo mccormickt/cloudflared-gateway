@@ -35,25 +35,25 @@ func init() {
 	utilruntime.Must(cfv1alpha1.AddToScheme(scheme))
 }
 
-// experimentalBackendsEnabled gives an explicit flag precedence over the
+// booleanFlagEnabled gives an explicit flag precedence over the
 // environment and rejects invalid environment values instead of disabling it.
-func experimentalBackendsEnabled(fs *flag.FlagSet) (bool, error) {
+func booleanFlagEnabled(fs *flag.FlagSet, flagName, envName string) (bool, error) {
 	explicit := false
 	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "enable-experimental-backends" {
+		if f.Name == flagName {
 			explicit = true
 		}
 	})
 	if explicit {
-		return strconv.ParseBool(fs.Lookup("enable-experimental-backends").Value.String())
+		return strconv.ParseBool(fs.Lookup(flagName).Value.String())
 	}
-	v, ok := os.LookupEnv("ENABLE_EXPERIMENTAL_BACKENDS")
+	v, ok := os.LookupEnv(envName)
 	if !ok {
 		return false, nil
 	}
 	b, err := strconv.ParseBool(v)
 	if err != nil {
-		return false, fmt.Errorf("ENABLE_EXPERIMENTAL_BACKENDS must be a boolean: %w", err)
+		return false, fmt.Errorf("%s must be a boolean: %w", envName, err)
 	}
 	return b, nil
 }
@@ -62,14 +62,21 @@ func main() {
 	flag.Bool("enable-experimental-backends", false,
 		"Enable support for the experimental Gateway API XBackend resource "+
 			"(gateway.networking.x-k8s.io), letting routes target external FQDN destinations.")
+	flag.Bool("enable-dns-management", false,
+		"Manage proxied CNAME records for attached route hostnames. Requires Zone:Read and DNS:Edit.")
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New())
 	logger := ctrl.Log.WithName(controller.ControllerName)
 
-	enableExperimentalBackends, err := experimentalBackendsEnabled(flag.CommandLine)
+	enableExperimentalBackends, err := booleanFlagEnabled(flag.CommandLine, "enable-experimental-backends", "ENABLE_EXPERIMENTAL_BACKENDS")
 	if err != nil {
 		logger.Error(err, "Invalid experimental backend configuration")
+		os.Exit(1)
+	}
+	enableDNSManagement, err := booleanFlagEnabled(flag.CommandLine, "enable-dns-management", "ENABLE_DNS_MANAGEMENT")
+	if err != nil {
+		logger.Error(err, "Invalid DNS management configuration")
 		os.Exit(1)
 	}
 
@@ -104,6 +111,7 @@ func main() {
 		CloudflareClient:     cfClient,
 		ControllerName:       gwapiv1.GatewayController(controller.ControllerName),
 		ExperimentalBackends: enableExperimentalBackends,
+		ManageDNS:            enableDNSManagement,
 	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		logger.Error(err, "Error setting up controller")

@@ -44,6 +44,13 @@ xbackend_error='must be a GA v1.6.x release'
 output=$(render --kube-version 1.28.0)
 require_absent "$output" 'kind: Job'
 require_absent "$output" 'ENABLE_EXPERIMENTAL_BACKENDS'
+require_absent "$output" 'ENABLE_DNS_MANAGEMENT'
+
+# DNS management is independent of experimental backends and the CRD installer.
+output=$(render --set dns.enabled=true)
+require_contains "$(doc "$output" Deployment)" 'name: ENABLE_DNS_MANAGEMENT'
+require_absent "$output" 'ENABLE_EXPERIMENTAL_BACKENDS'
+require_absent "$output" 'kind: Job'
 
 # Pinned hook version matches the Gateway API module the controller is built against.
 gomod_version=$(awk '$1 == "sigs.k8s.io/gateway-api" {print $2}' "$root/go.mod")

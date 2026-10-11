@@ -9,9 +9,17 @@ import (
 	"time"
 
 	cf "github.com/cloudflare/cloudflare-go/v7"
+	"github.com/cloudflare/cloudflare-go/v7/dns"
 	"github.com/cloudflare/cloudflare-go/v7/option"
 	"github.com/cloudflare/cloudflare-go/v7/zero_trust"
+	"github.com/cloudflare/cloudflare-go/v7/zones"
 )
+
+// dnsBatchChunkSize bounds how many record mutations are sent in a single
+// dns_records/batch request. Each batch is transactional; chunking splits large
+// change sets into several atomic batches, mirroring external-dns's Cloudflare
+// provider behavior.
+const dnsBatchChunkSize = 100
 
 //go:generate mockgen -destination mock_client.go -package cloudflare github.com/mccormickt/cloudflared-gateway/internal/cloudflare APIClient
 
@@ -26,6 +34,16 @@ type APIClient interface {
 	DeleteTunnel(ctx context.Context, id string) error
 	UpdateTunnelConfiguration(ctx context.Context, tunnelID string, ingress []IngressRule) error
 	AccountID() string
+
+	// DNS record management (used only when DNS management is enabled).
+	// ListZones returns the account's zones for longest-suffix hostname matching.
+	ListZones(ctx context.Context) ([]Zone, error)
+	// ListDNSRecords returns the CNAME records in a zone, so the caller can diff
+	// the desired set and identify the records it owns (by comment).
+	ListDNSRecords(ctx context.Context, zoneID string) ([]DNSRecord, error)
+	// ApplyDNSChanges applies a planned change set to a zone via the
+	// transactional batch endpoint, chunked as needed.
+	ApplyDNSChanges(ctx context.Context, zoneID string, changes DNSChanges) error
 }
 
 type client struct {
@@ -110,6 +128,150 @@ func (c *client) UpdateTunnelConfiguration(ctx context.Context, tunnelID string,
 		return fmt.Errorf("updating tunnel %s configuration: %w", tunnelID, err)
 	}
 	return nil
+}
+
+// ListZones returns all zones on the account, used to match a hostname to the
+// zone that should hold its record (longest DNS suffix wins).
+func (c *client) ListZones(ctx context.Context) ([]Zone, error) {
+	iter := c.api.Zones.ListAutoPaging(ctx, zones.ZoneListParams{
+		Account: cf.F(zones.ZoneListParamsAccount{ID: cf.F(c.accountID)}),
+	})
+	var out []Zone
+	for iter.Next() {
+		z := iter.Current()
+		out = append(out, Zone{ID: z.ID, Name: NormalizeDNSName(z.Name)})
+	}
+	if err := iter.Err(); err != nil {
+		return nil, fmt.Errorf("listing zones: %w", err)
+	}
+	return out, nil
+}
+
+// ListDNSRecords returns the CNAME records in a zone. Names and targets are
+// normalized so they compare cleanly against desired records. Ownership and
+// conflict decisions are left to the caller (which filters by comment).
+func (c *client) ListDNSRecords(ctx context.Context, zoneID string) ([]DNSRecord, error) {
+	iter := c.api.DNS.Records.ListAutoPaging(ctx, dns.RecordListParams{
+		ZoneID: cf.F(zoneID),
+		Type:   cf.F(dns.RecordListParamsTypeCNAME),
+	})
+	var out []DNSRecord
+	for iter.Next() {
+		r := iter.Current()
+		out = append(out, DNSRecord{
+			ID:      r.ID,
+			Name:    NormalizeDNSName(r.Name),
+			Type:    "CNAME",
+			Content: NormalizeDNSName(r.Content),
+			Proxied: r.Proxied,
+			Comment: r.Comment,
+		})
+	}
+	if err := iter.Err(); err != nil {
+		return nil, fmt.Errorf("listing DNS records for zone %s: %w", zoneID, err)
+	}
+	return out, nil
+}
+
+// ApplyDNSChanges applies a change set to a zone using the transactional batch
+// endpoint, splitting into multiple atomic batches when the change set exceeds
+// dnsBatchChunkSize.
+func (c *client) ApplyDNSChanges(ctx context.Context, zoneID string, changes DNSChanges) error {
+	if changes.Empty() {
+		return nil
+	}
+	for _, chunk := range chunkDNSChanges(changes, dnsBatchChunkSize) {
+		if _, err := c.api.DNS.Records.Batch(ctx, toV7BatchParams(zoneID, chunk)); err != nil {
+			return fmt.Errorf("applying DNS batch for zone %s: %w", zoneID, err)
+		}
+	}
+	return nil
+}
+
+// chunkDNSChanges splits a change set so each chunk holds at most size total
+// mutations. Deletes are ordered before updates and creates so a rename within
+// one batch frees the old name before the new record is posted.
+func chunkDNSChanges(changes DNSChanges, size int) []DNSChanges {
+	if size <= 0 {
+		return []DNSChanges{changes}
+	}
+	var out []DNSChanges
+	cur := DNSChanges{}
+	n := 0
+	flush := func() {
+		if !cur.Empty() {
+			out = append(out, cur)
+			cur = DNSChanges{}
+			n = 0
+		}
+	}
+	for _, r := range changes.Deletes {
+		cur.Deletes = append(cur.Deletes, r)
+		if n++; n >= size {
+			flush()
+		}
+	}
+	for _, r := range changes.Updates {
+		cur.Updates = append(cur.Updates, r)
+		if n++; n >= size {
+			flush()
+		}
+	}
+	for _, r := range changes.Creates {
+		cur.Creates = append(cur.Creates, r)
+		if n++; n >= size {
+			flush()
+		}
+	}
+	flush()
+	return out
+}
+
+// toV7BatchParams translates a domain change set into v7 batch params. This is
+// part of the single SDK-coupling seam, alongside toV7Ingress.
+func toV7BatchParams(zoneID string, changes DNSChanges) dns.RecordBatchParams {
+	params := dns.RecordBatchParams{ZoneID: cf.F(zoneID)}
+	if len(changes.Deletes) > 0 {
+		deletes := make([]dns.RecordBatchParamsDelete, 0, len(changes.Deletes))
+		for _, rec := range changes.Deletes {
+			deletes = append(deletes, dns.RecordBatchParamsDelete{ID: cf.F(rec.ID)})
+		}
+		params.Deletes = cf.F(deletes)
+	}
+	if len(changes.Updates) > 0 {
+		patches := make([]dns.BatchPatchUnionParam, 0, len(changes.Updates))
+		for _, rec := range changes.Updates {
+			patches = append(patches, dns.BatchPatchCNAMERecordParam{
+				ID:               cf.F(rec.ID),
+				CNAMERecordParam: cnameRecordParam(rec),
+			})
+		}
+		params.Patches = cf.F(patches)
+	}
+	if len(changes.Creates) > 0 {
+		posts := make([]dns.RecordBatchParamsPostUnion, 0, len(changes.Creates))
+		for _, rec := range changes.Creates {
+			posts = append(posts, cnameRecordParam(rec))
+		}
+		params.Posts = cf.F(posts)
+	}
+	return params
+}
+
+// cnameRecordParam builds the v7 CNAME record body shared by posts and patches.
+// Proxied CNAMEs must use automatic TTL (1).
+func cnameRecordParam(rec DNSRecord) dns.CNAMERecordParam {
+	p := dns.CNAMERecordParam{
+		Name:    cf.F(rec.Name),
+		Type:    cf.F(dns.CNAMERecordTypeCNAME),
+		TTL:     cf.F(dns.TTL1),
+		Content: cf.F(rec.Content),
+		Proxied: cf.F(rec.Proxied),
+	}
+	if rec.Comment != "" {
+		p.Comment = cf.F(rec.Comment)
+	}
+	return p
 }
 
 // toV7Ingress translates the controller's domain ingress rules into the v7 SDK

@@ -39,10 +39,40 @@ type mockCloudflareClient struct {
 	createErr      error
 	deleteErr      error
 	configErr      error
+	zones          []cfclient.Zone
+	dnsRecords     map[string][]cfclient.DNSRecord
+	zonesErr       error
+	listRecordsErr error
+	applyErr       error
+	nextRecordID   int
 }
 
 func newMockClient() *mockCloudflareClient {
 	return &mockCloudflareClient{accountID: "test-account"}
+}
+
+func (m *mockCloudflareClient) withZones(zones ...cfclient.Zone) *mockCloudflareClient {
+	m.zones = zones
+	return m
+}
+
+func (m *mockCloudflareClient) seedDNSRecord(zoneID string, rec cfclient.DNSRecord) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.dnsRecords == nil {
+		m.dnsRecords = map[string][]cfclient.DNSRecord{}
+	}
+	if rec.ID == "" {
+		m.nextRecordID++
+		rec.ID = fmt.Sprintf("seed-%d", m.nextRecordID)
+	}
+	m.dnsRecords[zoneID] = append(m.dnsRecords[zoneID], rec)
+}
+
+func (m *mockCloudflareClient) dnsRecordsFor(zoneID string) []cfclient.DNSRecord {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]cfclient.DNSRecord(nil), m.dnsRecords[zoneID]...)
 }
 
 func (m *mockCloudflareClient) withExistingTunnel(id, name string) *mockCloudflareClient {
@@ -90,6 +120,55 @@ func (m *mockCloudflareClient) DeleteTunnel(ctx context.Context, id string) erro
 func (m *mockCloudflareClient) UpdateTunnelConfiguration(ctx context.Context, tunnelID string, ingress []cfclient.IngressRule) error {
 	m.record("UpdateTunnelConfiguration", tunnelID, len(ingress))
 	return m.configErr
+}
+
+func (m *mockCloudflareClient) ListZones(ctx context.Context) ([]cfclient.Zone, error) {
+	m.record("ListZones")
+	return append([]cfclient.Zone(nil), m.zones...), m.zonesErr
+}
+
+func (m *mockCloudflareClient) ListDNSRecords(ctx context.Context, zoneID string) ([]cfclient.DNSRecord, error) {
+	m.record("ListDNSRecords", zoneID)
+	return m.dnsRecordsFor(zoneID), m.listRecordsErr
+}
+
+func (m *mockCloudflareClient) ApplyDNSChanges(ctx context.Context, zoneID string, changes cfclient.DNSChanges) error {
+	m.record("ApplyDNSChanges", zoneID, len(changes.Creates), len(changes.Updates), len(changes.Deletes))
+	if m.applyErr != nil {
+		return m.applyErr
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.dnsRecords == nil {
+		m.dnsRecords = map[string][]cfclient.DNSRecord{}
+	}
+	del := map[string]bool{}
+	for _, d := range changes.Deletes {
+		del[d.ID] = true
+	}
+	upd := map[string]cfclient.DNSRecord{}
+	for _, u := range changes.Updates {
+		upd[u.ID] = u
+	}
+	recs := m.dnsRecords[zoneID]
+	kept := recs[:0:0]
+	for _, r := range recs {
+		if del[r.ID] {
+			continue
+		}
+		if u, ok := upd[r.ID]; ok {
+			kept = append(kept, u)
+		} else {
+			kept = append(kept, r)
+		}
+	}
+	for _, c := range changes.Creates {
+		m.nextRecordID++
+		c.ID = fmt.Sprintf("rec-%d", m.nextRecordID)
+		kept = append(kept, c)
+	}
+	m.dnsRecords[zoneID] = kept
+	return nil
 }
 
 // ---------------------------------------------------------------------------
