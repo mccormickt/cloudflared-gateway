@@ -28,6 +28,7 @@ rules:
   - get
   - list
   - update
+  - watch
 - apiGroups:
   - ""
   resources:
@@ -53,6 +54,7 @@ rules:
   - get
   - list
   - update
+  - watch
 - apiGroups:
   - cloudflare.jan0ski.net
   resources:
