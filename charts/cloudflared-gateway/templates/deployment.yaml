@@ -50,6 +50,10 @@ spec:
                 secretKeyRef:
                   name: {{ include "cloudflared-gateway.secretName" . }}
                   key: api-token
+            {{- if .Values.experimental.backends.enabled }}
+            - name: ENABLE_EXPERIMENTAL_BACKENDS
+              value: "true"
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

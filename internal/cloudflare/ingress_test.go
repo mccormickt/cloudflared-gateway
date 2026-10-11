@@ -8,7 +8,6 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
-	gwapiv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
 )
 
 // ---------------------------------------------------------------------------
@@ -110,7 +109,7 @@ func TestBuildTunnelToken_EmptySecret(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBuildIngressRules_EmptyRoutes(t *testing.T) {
-	rules := BuildIngressRules(nil)
+	rules := BuildIngressRules(nil, NilResolver)
 	if len(rules) != 0 {
 		t.Errorf("empty routes should produce no rules, got %d", len(rules))
 	}
@@ -133,7 +132,7 @@ func TestBuildAndSort_MostSpecificWins(t *testing.T) {
 		}},
 	)
 
-	rules := BuildIngressRules([]gwapiv1.HTTPRoute{route})
+	rules := BuildIngressRules([]gwapiv1.HTTPRoute{route}, NilResolver)
 	SortByPrecedence(rules)
 
 	want := []string{"^/api/health$", "^/api(/.*)?$", ""}
@@ -156,7 +155,7 @@ func TestBuildIngressRules_SingleRouteWithHostnameAndPath(t *testing.T) {
 		}},
 	)
 
-	rules := BuildIngressRules([]gwapiv1.HTTPRoute{route})
+	rules := BuildIngressRules([]gwapiv1.HTTPRoute{route}, NilResolver)
 
 	if len(rules) != 1 {
 		t.Fatalf("expected 1 rule, got %d", len(rules))
@@ -187,7 +186,7 @@ func TestBuildIngressRules_MultipleRoutes(t *testing.T) {
 		}},
 	)
 
-	rules := BuildIngressRules([]gwapiv1.HTTPRoute{route1, route2})
+	rules := BuildIngressRules([]gwapiv1.HTTPRoute{route1, route2}, NilResolver)
 
 	if len(rules) != 2 {
 		t.Fatalf("expected 2 rules, got %d", len(rules))
@@ -215,7 +214,7 @@ func TestBuildIngressRules_RouteWithoutHostname(t *testing.T) {
 		}},
 	)
 
-	rules := BuildIngressRules([]gwapiv1.HTTPRoute{route})
+	rules := BuildIngressRules([]gwapiv1.HTTPRoute{route}, NilResolver)
 
 	if len(rules) != 1 {
 		t.Fatalf("expected 1 rule, got %d", len(rules))
@@ -237,7 +236,7 @@ func TestBuildIngressRules_PathPrefixRootOmitsPath(t *testing.T) {
 		}},
 	)
 
-	rules := BuildIngressRules([]gwapiv1.HTTPRoute{route})
+	rules := BuildIngressRules([]gwapiv1.HTTPRoute{route}, NilResolver)
 
 	if len(rules) != 1 {
 		t.Fatalf("expected 1 rule, got %d", len(rules))
@@ -255,7 +254,7 @@ func TestBuildIngressRules_NoBackendRefProduces503(t *testing.T) {
 		}},
 	)
 
-	rules := BuildIngressRules([]gwapiv1.HTTPRoute{route})
+	rules := BuildIngressRules([]gwapiv1.HTTPRoute{route}, NilResolver)
 
 	if len(rules) != 1 {
 		t.Fatalf("expected 1 rule, got %d", len(rules))
@@ -284,7 +283,7 @@ func TestBuildIngressRules_URLRewriteSetsHTTPHostHeader(t *testing.T) {
 		}},
 	)
 
-	rules := BuildIngressRules([]gwapiv1.HTTPRoute{route})
+	rules := BuildIngressRules([]gwapiv1.HTTPRoute{route}, NilResolver)
 
 	if len(rules) != 1 {
 		t.Fatalf("expected 1 rule, got %d", len(rules))
@@ -314,7 +313,7 @@ func TestBuildIngressRules_RequestHeaderModifierHostSetsHTTPHostHeader(t *testin
 		}},
 	)
 
-	rules := BuildIngressRules([]gwapiv1.HTTPRoute{route})
+	rules := BuildIngressRules([]gwapiv1.HTTPRoute{route}, NilResolver)
 
 	if len(rules) != 1 {
 		t.Fatalf("expected 1 rule, got %d", len(rules))
@@ -335,7 +334,7 @@ func TestBuildIngressRules_NoFiltersNoOriginRequest(t *testing.T) {
 		}},
 	)
 
-	rules := BuildIngressRules([]gwapiv1.HTTPRoute{route})
+	rules := BuildIngressRules([]gwapiv1.HTTPRoute{route}, NilResolver)
 
 	if len(rules) != 1 {
 		t.Fatalf("expected 1 rule, got %d", len(rules))
@@ -356,7 +355,7 @@ func TestBuildIngressRules_UnsupportedFilterIgnored(t *testing.T) {
 		}},
 	)
 
-	rules := BuildIngressRules([]gwapiv1.HTTPRoute{route})
+	rules := BuildIngressRules([]gwapiv1.HTTPRoute{route}, NilResolver)
 
 	if len(rules) != 1 {
 		t.Fatalf("expected 1 rule, got %d", len(rules))
@@ -382,7 +381,7 @@ func TestBuildIngressRules_BackendTimeout(t *testing.T) {
 		}},
 	)
 
-	rules := BuildIngressRules([]gwapiv1.HTTPRoute{route})
+	rules := BuildIngressRules([]gwapiv1.HTTPRoute{route}, NilResolver)
 
 	if len(rules) != 1 {
 		t.Fatalf("expected 1 rule, got %d", len(rules))
@@ -410,7 +409,7 @@ func TestBuildIngressRules_BackendTimeoutMilliseconds(t *testing.T) {
 		}},
 	)
 
-	rules := BuildIngressRules([]gwapiv1.HTTPRoute{route})
+	rules := BuildIngressRules([]gwapiv1.HTTPRoute{route}, NilResolver)
 
 	if len(rules) != 1 {
 		t.Fatalf("expected 1 rule, got %d", len(rules))
@@ -432,7 +431,7 @@ func TestBuildIngressRules_NoTimeout(t *testing.T) {
 		}},
 	)
 
-	rules := BuildIngressRules([]gwapiv1.HTTPRoute{route})
+	rules := BuildIngressRules([]gwapiv1.HTTPRoute{route}, NilResolver)
 
 	if len(rules) != 1 {
 		t.Fatalf("expected 1 rule, got %d", len(rules))
@@ -461,7 +460,7 @@ func TestBuildIngressRules_TimeoutWithFilter(t *testing.T) {
 		}},
 	)
 
-	rules := BuildIngressRules([]gwapiv1.HTTPRoute{route})
+	rules := BuildIngressRules([]gwapiv1.HTTPRoute{route}, NilResolver)
 
 	if len(rules) != 1 {
 		t.Fatalf("expected 1 rule, got %d", len(rules))
@@ -484,14 +483,14 @@ func TestBuildIngressRules_TimeoutWithFilter(t *testing.T) {
 
 func TestBuildTLSIngressRules_WithHostnames(t *testing.T) {
 	p := gwapiv1.PortNumber(8443)
-	route := gwapiv1alpha2.TLSRoute{
+	route := gwapiv1.TLSRoute{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "tls-route",
 			Namespace: "default",
 		},
-		Spec: gwapiv1alpha2.TLSRouteSpec{
+		Spec: gwapiv1.TLSRouteSpec{
 			Hostnames: []gwapiv1.Hostname{hostname("secure.example.com")},
-			Rules: []gwapiv1alpha2.TLSRouteRule{{
+			Rules: []gwapiv1.TLSRouteRule{{
 				BackendRefs: []gwapiv1.BackendRef{{
 					BackendObjectReference: gwapiv1.BackendObjectReference{
 						Name: "tls-svc",
@@ -502,7 +501,7 @@ func TestBuildTLSIngressRules_WithHostnames(t *testing.T) {
 		},
 	}
 
-	rules := BuildTLSIngressRules([]gwapiv1alpha2.TLSRoute{route})
+	rules := BuildTLSIngressRules([]gwapiv1.TLSRoute{route}, NilResolver)
 
 	if len(rules) != 1 {
 		t.Fatalf("expected 1 rule, got %d", len(rules))
@@ -519,14 +518,14 @@ func TestBuildTLSIngressRules_WithHostnames(t *testing.T) {
 }
 
 func TestBuildTLSIngressRules_DefaultPort443(t *testing.T) {
-	route := gwapiv1alpha2.TLSRoute{
+	route := gwapiv1.TLSRoute{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "tls-route",
 			Namespace: "default",
 		},
-		Spec: gwapiv1alpha2.TLSRouteSpec{
+		Spec: gwapiv1.TLSRouteSpec{
 			Hostnames: []gwapiv1.Hostname{hostname("secure.example.com")},
-			Rules: []gwapiv1alpha2.TLSRouteRule{{
+			Rules: []gwapiv1.TLSRouteRule{{
 				BackendRefs: []gwapiv1.BackendRef{{
 					BackendObjectReference: gwapiv1.BackendObjectReference{
 						Name: "tls-svc",
@@ -537,7 +536,7 @@ func TestBuildTLSIngressRules_DefaultPort443(t *testing.T) {
 		},
 	}
 
-	rules := BuildTLSIngressRules([]gwapiv1alpha2.TLSRoute{route})
+	rules := BuildTLSIngressRules([]gwapiv1.TLSRoute{route}, NilResolver)
 
 	if len(rules) != 1 {
 		t.Fatalf("expected 1 rule, got %d", len(rules))
@@ -548,20 +547,20 @@ func TestBuildTLSIngressRules_DefaultPort443(t *testing.T) {
 }
 
 func TestBuildTLSIngressRules_NoBackendRefProduces503(t *testing.T) {
-	route := gwapiv1alpha2.TLSRoute{
+	route := gwapiv1.TLSRoute{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "tls-empty",
 			Namespace: "default",
 		},
-		Spec: gwapiv1alpha2.TLSRouteSpec{
+		Spec: gwapiv1.TLSRouteSpec{
 			Hostnames: []gwapiv1.Hostname{hostname("example.com")},
-			Rules:     []gwapiv1alpha2.TLSRouteRule{{
+			Rules:     []gwapiv1.TLSRouteRule{{
 				// No BackendRefs
 			}},
 		},
 	}
 
-	rules := BuildTLSIngressRules([]gwapiv1alpha2.TLSRoute{route})
+	rules := BuildTLSIngressRules([]gwapiv1.TLSRoute{route}, NilResolver)
 
 	if len(rules) != 1 {
 		t.Fatalf("expected 1 rule, got %d", len(rules))
@@ -577,13 +576,13 @@ func TestBuildTLSIngressRules_NoBackendRefProduces503(t *testing.T) {
 
 func TestBuildTCPIngressRules_BasicRoute(t *testing.T) {
 	p := gwapiv1.PortNumber(5432)
-	route := gwapiv1alpha2.TCPRoute{
+	route := gwapiv1.TCPRoute{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "tcp-route",
 			Namespace: "default",
 		},
-		Spec: gwapiv1alpha2.TCPRouteSpec{
-			Rules: []gwapiv1alpha2.TCPRouteRule{{
+		Spec: gwapiv1.TCPRouteSpec{
+			Rules: []gwapiv1.TCPRouteRule{{
 				BackendRefs: []gwapiv1.BackendRef{{
 					BackendObjectReference: gwapiv1.BackendObjectReference{
 						Name: "db-svc",
@@ -594,7 +593,7 @@ func TestBuildTCPIngressRules_BasicRoute(t *testing.T) {
 		},
 	}
 
-	rules := BuildTCPIngressRules([]gwapiv1alpha2.TCPRoute{route})
+	rules := BuildTCPIngressRules([]gwapiv1.TCPRoute{route}, NilResolver)
 
 	if len(rules) != 1 {
 		t.Fatalf("expected 1 rule, got %d", len(rules))
@@ -611,19 +610,19 @@ func TestBuildTCPIngressRules_BasicRoute(t *testing.T) {
 }
 
 func TestBuildTCPIngressRules_NoBackendRef(t *testing.T) {
-	route := gwapiv1alpha2.TCPRoute{
+	route := gwapiv1.TCPRoute{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "tcp-empty",
 			Namespace: "default",
 		},
-		Spec: gwapiv1alpha2.TCPRouteSpec{
-			Rules: []gwapiv1alpha2.TCPRouteRule{{
+		Spec: gwapiv1.TCPRouteSpec{
+			Rules: []gwapiv1.TCPRouteRule{{
 				// No BackendRefs
 			}},
 		},
 	}
 
-	rules := BuildTCPIngressRules([]gwapiv1alpha2.TCPRoute{route})
+	rules := BuildTCPIngressRules([]gwapiv1.TCPRoute{route}, NilResolver)
 
 	if len(rules) != 1 {
 		t.Fatalf("expected 1 rule, got %d", len(rules))
@@ -685,7 +684,7 @@ func TestBuildGRPCIngressRules_ServiceAndMethod(t *testing.T) {
 		}},
 	)
 
-	rules := BuildGRPCIngressRules([]gwapiv1.GRPCRoute{route})
+	rules := BuildGRPCIngressRules([]gwapiv1.GRPCRoute{route}, NilResolver)
 
 	if len(rules) != 1 {
 		t.Fatalf("expected 1 rule, got %d", len(rules))
@@ -713,7 +712,7 @@ func TestBuildGRPCIngressRules_ServiceOnly(t *testing.T) {
 		}},
 	)
 
-	rules := BuildGRPCIngressRules([]gwapiv1.GRPCRoute{route})
+	rules := BuildGRPCIngressRules([]gwapiv1.GRPCRoute{route}, NilResolver)
 
 	if len(rules) != 1 {
 		t.Fatalf("expected 1 rule, got %d", len(rules))
@@ -736,7 +735,7 @@ func TestBuildGRPCIngressRules_RegexMatch(t *testing.T) {
 		}},
 	)
 
-	rules := BuildGRPCIngressRules([]gwapiv1.GRPCRoute{route})
+	rules := BuildGRPCIngressRules([]gwapiv1.GRPCRoute{route}, NilResolver)
 
 	if len(rules) != 1 {
 		t.Fatalf("expected 1 rule, got %d", len(rules))
@@ -756,7 +755,7 @@ func TestBuildGRPCIngressRules_NoMatch(t *testing.T) {
 		}},
 	)
 
-	rules := BuildGRPCIngressRules([]gwapiv1.GRPCRoute{route})
+	rules := BuildGRPCIngressRules([]gwapiv1.GRPCRoute{route}, NilResolver)
 
 	if len(rules) != 1 {
 		t.Fatalf("expected 1 rule, got %d", len(rules))
@@ -777,7 +776,7 @@ func TestBuildGRPCIngressRules_Http2Origin(t *testing.T) {
 		}},
 	)
 
-	rules := BuildGRPCIngressRules([]gwapiv1.GRPCRoute{route})
+	rules := BuildGRPCIngressRules([]gwapiv1.GRPCRoute{route}, NilResolver)
 
 	if len(rules) != 1 {
 		t.Fatalf("expected 1 rule, got %d", len(rules))
@@ -798,7 +797,7 @@ func TestBuildGRPCIngressRules_NoBackendRef(t *testing.T) {
 		}},
 	)
 
-	rules := BuildGRPCIngressRules([]gwapiv1.GRPCRoute{route})
+	rules := BuildGRPCIngressRules([]gwapiv1.GRPCRoute{route}, NilResolver)
 
 	if len(rules) != 1 {
 		t.Fatalf("expected 1 rule, got %d", len(rules))

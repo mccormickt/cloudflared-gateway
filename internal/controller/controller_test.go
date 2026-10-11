@@ -16,11 +16,10 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
-	gwapiv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
-	gwapiv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 )
 
 // ---------------------------------------------------------------------------
@@ -101,8 +100,6 @@ func testScheme() *runtime.Scheme {
 	s := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(s))
 	utilruntime.Must(gwapiv1.Install(s))
-	utilruntime.Must(gwapiv1alpha2.Install(s))
-	utilruntime.Must(gwapiv1beta1.Install(s))
 	utilruntime.Must(cfv1alpha1.AddToScheme(s))
 	return s
 }
@@ -727,18 +724,18 @@ func TestNamespaceSelector_MatchExpressions(t *testing.T) {
 
 func TestReferenceGrant_Allowed(t *testing.T) {
 	scheme := testScheme()
-	grant := &gwapiv1beta1.ReferenceGrant{
+	grant := &gwapiv1.ReferenceGrant{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "allow-routes",
 			Namespace: "backend",
 		},
-		Spec: gwapiv1beta1.ReferenceGrantSpec{
-			From: []gwapiv1beta1.ReferenceGrantFrom{{
+		Spec: gwapiv1.ReferenceGrantSpec{
+			From: []gwapiv1.ReferenceGrantFrom{{
 				Group:     "gateway.networking.k8s.io",
 				Kind:      "HTTPRoute",
 				Namespace: "frontend",
 			}},
-			To: []gwapiv1beta1.ReferenceGrantTo{{
+			To: []gwapiv1.ReferenceGrantTo{{
 				Group: "",
 				Kind:  "Service",
 			}},
@@ -759,18 +756,18 @@ func TestReferenceGrant_Allowed(t *testing.T) {
 func TestReferenceGrant_Denied(t *testing.T) {
 	scheme := testScheme()
 	// Grant exists but for different source namespace
-	grant := &gwapiv1beta1.ReferenceGrant{
+	grant := &gwapiv1.ReferenceGrant{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "allow-routes",
 			Namespace: "backend",
 		},
-		Spec: gwapiv1beta1.ReferenceGrantSpec{
-			From: []gwapiv1beta1.ReferenceGrantFrom{{
+		Spec: gwapiv1.ReferenceGrantSpec{
+			From: []gwapiv1.ReferenceGrantFrom{{
 				Group:     "gateway.networking.k8s.io",
 				Kind:      "HTTPRoute",
 				Namespace: "other-ns",
 			}},
-			To: []gwapiv1beta1.ReferenceGrantTo{{
+			To: []gwapiv1.ReferenceGrantTo{{
 				Group: "",
 				Kind:  "Service",
 			}},
@@ -785,6 +782,58 @@ func TestReferenceGrant_Denied(t *testing.T) {
 	}
 	if allowed {
 		t.Error("ReferenceGrant should deny when source namespace doesn't match")
+	}
+}
+
+func TestReferenceGrantTo_XBackendGroupAllowed(t *testing.T) {
+	scheme := testScheme()
+	grant := &gwapiv1.ReferenceGrant{
+		ObjectMeta: metav1.ObjectMeta{Name: "allow-xbackend", Namespace: "backend"},
+		Spec: gwapiv1.ReferenceGrantSpec{
+			From: []gwapiv1.ReferenceGrantFrom{{
+				Group:     "gateway.networking.k8s.io",
+				Kind:      "HTTPRoute",
+				Namespace: "frontend",
+			}},
+			To: []gwapiv1.ReferenceGrantTo{{
+				Group: "gateway.networking.x-k8s.io",
+				Kind:  "XBackend",
+			}},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(grant).Build()
+
+	allowed, err := CheckReferenceGrantTo(context.Background(), c, "frontend", "HTTPRoute", "backend", "gateway.networking.x-k8s.io", "XBackend", "ext")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !allowed {
+		t.Error("ReferenceGrant should allow cross-namespace XBackend reference")
+	}
+}
+
+func TestReferenceGrantTo_CoreGrantDoesNotAuthorizeXBackend(t *testing.T) {
+	scheme := testScheme()
+	// A core-group grant must not authorize an extension-group (XBackend) ref.
+	grant := &gwapiv1.ReferenceGrant{
+		ObjectMeta: metav1.ObjectMeta{Name: "allow-core", Namespace: "backend"},
+		Spec: gwapiv1.ReferenceGrantSpec{
+			From: []gwapiv1.ReferenceGrantFrom{{
+				Group:     "gateway.networking.k8s.io",
+				Kind:      "HTTPRoute",
+				Namespace: "frontend",
+			}},
+			To: []gwapiv1.ReferenceGrantTo{{Group: "", Kind: "XBackend"}},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(grant).Build()
+
+	allowed, err := CheckReferenceGrantTo(context.Background(), c, "frontend", "HTTPRoute", "backend", "gateway.networking.x-k8s.io", "XBackend", "ext")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allowed {
+		t.Error("a core-group grant must not authorize an XBackend reference")
 	}
 }
 
@@ -899,18 +948,18 @@ func TestBuildDeployment_InfrastructureLabelsOnly(t *testing.T) {
 func TestReferenceGrant_NamedTarget(t *testing.T) {
 	scheme := testScheme()
 	targetName := gwapiv1.ObjectName("specific-svc")
-	grant := &gwapiv1beta1.ReferenceGrant{
+	grant := &gwapiv1.ReferenceGrant{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "allow-specific",
 			Namespace: "backend",
 		},
-		Spec: gwapiv1beta1.ReferenceGrantSpec{
-			From: []gwapiv1beta1.ReferenceGrantFrom{{
+		Spec: gwapiv1.ReferenceGrantSpec{
+			From: []gwapiv1.ReferenceGrantFrom{{
 				Group:     "gateway.networking.k8s.io",
 				Kind:      "HTTPRoute",
 				Namespace: "frontend",
 			}},
-			To: []gwapiv1beta1.ReferenceGrantTo{{
+			To: []gwapiv1.ReferenceGrantTo{{
 				Group: "",
 				Kind:  "Service",
 				Name:  &targetName,
@@ -1145,7 +1194,7 @@ func TestApplyOriginPolicies_OnlyTargetedRoute(t *testing.T) {
 		httpRouteWithBackend("route-untargeted", "a.example.com"),
 		httpRouteWithBackend("route-targeted", "b.example.com"),
 	}
-	rules := cfclient.BuildIngressRules(routes)
+	rules := cfclient.BuildIngressRules(routes, cfclient.NilResolver)
 	if len(rules) != 2 {
 		t.Fatalf("expected 2 rules, got %d", len(rules))
 	}
@@ -1166,7 +1215,7 @@ func TestApplyOriginPolicies_OnlyTargetedRoute(t *testing.T) {
 
 func TestApplyOriginPolicies_MultiHostname(t *testing.T) {
 	routes := []gwapiv1.HTTPRoute{httpRouteWithBackend("multi-host", "a.example.com", "b.example.com")}
-	rules := cfclient.BuildIngressRules(routes)
+	rules := cfclient.BuildIngressRules(routes, cfclient.NilResolver)
 	if len(rules) != 2 {
 		t.Fatalf("expected 2 rules (one per hostname), got %d", len(rules))
 	}
@@ -1188,7 +1237,7 @@ func TestApplyOriginPolicies_MultiHostname(t *testing.T) {
 // policy overrides it for that route.
 func TestApplyOriginPolicies_InheritedPrecedence(t *testing.T) {
 	routes := []gwapiv1.HTTPRoute{httpRouteWithBackend("route", "a.example.com")}
-	rules := cfclient.BuildIngressRules(routes)
+	rules := cfclient.BuildIngressRules(routes, cfclient.NilResolver)
 
 	policies := []cfv1alpha1.CloudflareOriginPolicy{
 		makeOriginPolicy("gw-default", "default", "Gateway", "gw",
@@ -1212,5 +1261,84 @@ func TestApplyOriginPolicies_InheritedPrecedence(t *testing.T) {
 	// Gateway-level default inherited where the route is silent.
 	if or.DisableChunkedEncoding == nil || !*or.DisableChunkedEncoding {
 		t.Errorf("expected gateway-level disableChunkedEncoding=true inherited, got %v", or.DisableChunkedEncoding)
+	}
+}
+
+func TestServiceToGateways(t *testing.T) {
+	local := gwapiv1.BackendObjectReference{Name: "api"}
+	remote := gwapiv1.BackendObjectReference{Name: "api", Namespace: ptr(gwapiv1.Namespace("backends"))}
+	base := &gwapiv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "http", Namespace: "backends"},
+		Spec: gwapiv1.HTTPRouteSpec{
+			CommonRouteSpec: gwapiv1.CommonRouteSpec{ParentRefs: []gwapiv1.ParentReference{{Name: "http-gw"}, {Name: "http-gw"}}},
+			Rules: []gwapiv1.HTTPRouteRule{{BackendRefs: []gwapiv1.HTTPBackendRef{
+				{BackendRef: gwapiv1.BackendRef{BackendObjectReference: gwapiv1.BackendObjectReference{Name: "unrelated"}}},
+				{BackendRef: gwapiv1.BackendRef{BackendObjectReference: local}},
+			}}},
+		},
+	}
+	objects := make([]client.Object, 0, 10)
+	objects = append(objects,
+		base,
+		&gwapiv1.GRPCRoute{
+			ObjectMeta: metav1.ObjectMeta{Name: "grpc", Namespace: "apps"},
+			Spec: gwapiv1.GRPCRouteSpec{
+				CommonRouteSpec: gwapiv1.CommonRouteSpec{ParentRefs: []gwapiv1.ParentReference{{Name: "grpc-gw", Namespace: ptr(gwapiv1.Namespace("gateways"))}}},
+				Rules:           []gwapiv1.GRPCRouteRule{{BackendRefs: []gwapiv1.GRPCBackendRef{{BackendRef: gwapiv1.BackendRef{BackendObjectReference: remote}}}}},
+			},
+		},
+		&gwapiv1.TLSRoute{
+			ObjectMeta: metav1.ObjectMeta{Name: "tls", Namespace: "backends"},
+			Spec: gwapiv1.TLSRouteSpec{
+				CommonRouteSpec: gwapiv1.CommonRouteSpec{ParentRefs: []gwapiv1.ParentReference{{Name: "tls-gw"}}},
+				Rules:           []gwapiv1.TLSRouteRule{{BackendRefs: []gwapiv1.BackendRef{{BackendObjectReference: gwapiv1.BackendObjectReference{Name: "api", Group: ptr(gwapiv1.Group("core")), Kind: ptr(gwapiv1.Kind("Service"))}}}}},
+			},
+		},
+		&gwapiv1.TCPRoute{
+			ObjectMeta: metav1.ObjectMeta{Name: "tcp", Namespace: "apps"},
+			Spec: gwapiv1.TCPRouteSpec{
+				CommonRouteSpec: gwapiv1.CommonRouteSpec{ParentRefs: []gwapiv1.ParentReference{{Name: "tcp-gw"}}},
+				Rules:           []gwapiv1.TCPRouteRule{{BackendRefs: []gwapiv1.BackendRef{{BackendObjectReference: remote}}}},
+			},
+		},
+		&gwapiv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: "unrelated-gw", Namespace: "backends"}},
+	)
+	for _, tc := range []struct {
+		name string
+		ns   string
+		ref  gwapiv1.BackendObjectReference
+	}{
+		{name: "other-name", ns: "backends", ref: gwapiv1.BackendObjectReference{Name: "other"}},
+		{name: "other-default-namespace", ns: "apps", ref: local},
+		{name: "other-explicit-namespace", ns: "backends", ref: gwapiv1.BackendObjectReference{Name: "api", Namespace: ptr(gwapiv1.Namespace("elsewhere"))}},
+		{name: "other-group", ns: "backends", ref: gwapiv1.BackendObjectReference{Name: "api", Group: ptr(gwapiv1.Group("example.com"))}},
+		{name: "other-kind", ns: "backends", ref: gwapiv1.BackendObjectReference{Name: "api", Kind: ptr(gwapiv1.Kind("ConfigMap"))}},
+	} {
+		route := base.DeepCopy()
+		route.Name, route.Namespace = tc.name, tc.ns
+		route.Spec.ParentRefs = []gwapiv1.ParentReference{{Name: "unrelated-gw"}}
+		route.Spec.Rules[0].BackendRefs = []gwapiv1.HTTPBackendRef{{BackendRef: gwapiv1.BackendRef{BackendObjectReference: tc.ref}}}
+		objects = append(objects, route)
+	}
+	r := &GatewayReconciler{Client: fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(objects...).Build()}
+	svc := &v1.Service{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "backends"}}
+	requests := r.serviceToGateways(context.Background(), svc)
+	want := map[types.NamespacedName]bool{
+		{Namespace: "backends", Name: "http-gw"}: true,
+		{Namespace: "gateways", Name: "grpc-gw"}: true,
+		{Namespace: "backends", Name: "tls-gw"}:  true,
+		{Namespace: "apps", Name: "tcp-gw"}:      true,
+	}
+	for _, request := range requests {
+		if !want[request.NamespacedName] {
+			t.Fatalf("unexpected or duplicate Gateway: %v", request)
+		}
+		delete(want, request.NamespacedName)
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing Gateways: %v", want)
+	}
+	if got := r.serviceToGateways(context.Background(), &v1.Service{ObjectMeta: metav1.ObjectMeta{Name: "unused", Namespace: "backends"}}); len(got) != 0 {
+		t.Fatalf("unreferenced Service must not enqueue Gateways: %v", got)
 	}
 }

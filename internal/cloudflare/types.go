@@ -51,3 +51,42 @@ type IngressRule struct {
 	Service       string
 	OriginRequest *OriginRequest
 }
+
+// ResolvedBackend is the controller-side resolution of an external (XBackend)
+// backendRef: the fully-formed tunnel service URL plus the originRequest deltas
+// the backend's spec implies (TLS server name, NoTLSVerify, HTTP2Origin). An
+// empty Service means the ref was recognized as an XBackend but cannot be served
+// — missing, an unsupported protocol/TLS mode, or the feature is disabled — and
+// the builder emits http_status:500 for HTTPRoute or http_status:503 otherwise.
+type ResolvedBackend struct {
+	Service       string
+	OriginRequest *OriginRequest
+}
+
+// BackendRef is the normalized view of a route backendRef passed to a
+// BackendResolver. RouteNamespace and RouteKind identify the referencing route
+// (the ReferenceGrant "from" identity); Group/Kind/Namespace/Name/Port identify
+// the backend the ref points at, with Namespace already defaulted to the route's
+// namespace when the ref omitted it.
+type BackendRef struct {
+	RouteNamespace string
+	RouteKind      string
+	Group          string
+	Kind           string
+	Namespace      string
+	Name           string
+	Port           *int
+}
+
+// BackendResolver resolves a route backendRef. It returns ok=false for a valid
+// Service ref that the builder should turn into an in-cluster URL; ok=true for
+// an external origin or a rejected ref. An empty Service with ok=true fails
+// closed. The controller supplies the implementation with the backend objects
+// and ReferenceGrant permissions collected for the reconcile.
+type BackendResolver func(ref BackendRef) (ResolvedBackend, bool)
+
+// NilResolver declines every ref, so all backendRefs use the native Service path.
+// It is used by tests that do not need backend validation.
+func NilResolver(ref BackendRef) (ResolvedBackend, bool) {
+	return ResolvedBackend{}, false
+}

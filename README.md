@@ -68,8 +68,15 @@ kind create cluster --name cloudflared-gateway
 
 ```sh
 kubectl apply --server-side -f \
-  https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.1/experimental-install.yaml
+  https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.3/standard-install.yaml
 ```
+
+The controller uses `gateway.networking.k8s.io/v1` for Gateway, GatewayClass,
+HTTPRoute, GRPCRoute, TLSRoute, TCPRoute, BackendTLSPolicy, and ReferenceGrant.
+All are in the standard v1.6 bundle. Startup checks each required served API
+version and reports an install command if one is missing. Older TLSRoute and
+TCPRoute versions are not served by this bundle; update manifests to `v1`.
+The experimental channel is needed only for [XBackend](#experimental-external-origins-xbackend).
 
 ### 3. Create the Cloudflare credentials Secret
 
@@ -132,6 +139,22 @@ The full chart value reference lives in [`charts/cloudflared-gateway/values.yaml
 | `controllerName` | `GatewayClass.spec.controllerName` value the controller claims (default: `jan0ski.net/cloudflared-gateway`) |
 | `resources` | Pod resource requests and limits |
 
+### Backend references
+
+Every route's `backendRefs[0]` is resolved before it reaches the tunnel config. A ref must name a `Service` in the core group (the Gateway API default) or, with the experimental feature on, an [`XBackend`](#experimental-external-origins-xbackend); any other kind is rejected. The referenced object must exist, and a ref that crosses namespaces must be authorized by a `ReferenceGrant` in the *backend's* namespace.
+
+A ref that fails any of these reports `ResolvedRefs=False`. HTTPRoute serves
+`http_status:500`, as required by Gateway API; other route kinds use
+`http_status:503`:
+
+| Condition | Reason |
+|-----------|--------|
+| Backend object does not exist | `BackendNotFound` |
+| Cross-namespace ref with no matching `ReferenceGrant` | `RefNotPermitted` |
+| `kind` is neither `Service` nor `XBackend` | `InvalidKind` |
+
+A route with several failing refs reports the most actionable one. Services and grants are watched: creating a missing Service or a required `ReferenceGrant` restores routing without changing the route, and deleting either stops serving it.
+
 ### Origin request tuning (CloudflareOriginPolicy)
 
 Per-route Cloudflare origin settings are configured with the typed `CloudflareOriginPolicy` CRD (Inherited Policy, [GEP-713](https://gateway-api.sigs.k8s.io/geps/gep-713/)) — this replaces the former `tunnels.cloudflare.com/*` route annotations. A policy targeting a `Gateway` is the default for every attached route; a policy targeting a route overrides it for that route. Fields map to Cloudflare's [`originRequest`](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/configure-tunnels/origin-configuration/) object. See [`examples/cloudflare-origin-policy.yaml`](examples/cloudflare-origin-policy.yaml).
@@ -176,6 +199,104 @@ spec:
 ```
 
 See [`examples/cloudflare-access-policy.yaml`](examples/cloudflare-access-policy.yaml) for a route-scoped variant.
+
+## Experimental: external origins (XBackend)
+
+Routes can target destinations **outside** the cluster using the experimental Gateway API [`XBackend`](https://gateway-api.sigs.k8s.io/reference/api-types/backend/) resource (`gateway.networking.x-k8s.io/v1alpha1`, kind `XBackend`) instead of a synthetic `ExternalName` Service. Gateway API v1.6.3 has **no stable Backend/XBackend API**. A `backendRef` pointing at an `XBackend` of `type: ExternalHostname` makes the tunnel route to that FQDN — e.g. `https://api.openai.com:443`. This works for HTTPRoute, GRPCRoute, TLSRoute, and TCPRoute. See [`examples/xbackend.yaml`](examples/xbackend.yaml). Set the destination port in `XBackend.spec.port.port`; the route does not need a `backendRef.port`.
+
+This feature is **off by default**. Enable it with:
+
+- Helm: `--set experimental.backends.enabled=true`
+- Controller flag/env: `--enable-experimental-backends` / `ENABLE_EXPERIMENTAL_BACKENDS=true`
+
+Keep the stable CRDs on the standard channel and install **only** the experimental
+XBackend CRD, then enable the feature. From this checkout:
+
+```sh
+make install-crds         # standard bundle; not needed if already installed
+make install-xbackend-crd # only the XBackend CRD; waits until Established
+```
+
+The standalone manifest is pinned to:
+`https://raw.githubusercontent.com/kubernetes-sigs/gateway-api/v1.6.3/config/crd/experimental/gateway.networking.x-k8s.io_xbackends.yaml`.
+An existing full v1.6.x experimental bundle also works; do not replace it with
+the standard bundle just to use this controller. The controller never installs CRDs.
+
+| Cluster and feature flag | Startup / route behavior |
+|--------------------------|--------------------------|
+| Standard CRDs, feature disabled (default) | Starts without XBackend watches or API calls. XBackend refs report `ResolvedRefs=False` / `InvalidKind`, with an enable instruction. HTTPRoute serves 500; other route kinds use 503. |
+| Feature enabled, XBackend CRD absent or `v1alpha1` not served | Fails at startup with install and disable instructions. Install the CRD before enabling the flag. |
+| Standard CRDs plus standalone XBackend CRD, feature enabled | Starts. Compatibility is checked against the XBackend CRD, not the Gateway CRD's channel. |
+| XBackend CRD from a different minor release, a prerelease, or an invalid annotated version | Fails at startup. Use a GA v1.6.x XBackend CRD; patch versions within that release line are compatible. |
+| XBackend CRD metadata cannot be read (for example, missing RBAC) | Fails at startup with a CRD read-access instruction. Missing annotations on custom CRDs produce a compatibility warning instead. |
+
+Restart the controller after installing or upgrading CRDs; startup discovery does
+not enable features dynamically. A missing XBackend object on an enabled controller
+reports `ResolvedRefs=False` / `BackendNotFound`. HTTPRoute serves 500; other route
+kinds use 503.
+
+For a new cluster, the optional Helm hook can install the standard bundle plus
+XBackend: `--set experimental.installGatewayAPICRDs=true --set experimental.backends.enabled=true`.
+It uses `experimental.gatewayAPIVersion` (default `v1.6.3`). When the hook is
+enabled, rendering requires a GA v1 release >=v1.6.0 (older bundles lack required
+`v1` APIs) and, when installing XBackend, a GA v1.6.x release; with the hook
+disabled the value is not validated. The hook requires Kubernetes >=1.30 for
+stable admission-policy APIs and outbound access to `github.com`,
+`raw.githubusercontent.com`, and GitHub's release-asset CDN (for example
+`release-assets.githubusercontent.com`). Its pod reuses the chart's
+`imagePullSecrets`, `nodeSelector`, `tolerations`, `affinity.nodeAffinity`, and
+`resources`, but has its own `app.kubernetes.io/name` label, so controller
+NetworkPolicies do not grant it egress. This grants a temporary Job
+permission to manage CRDs and Gateway API's safe-upgrade admission policies.
+These are **cluster-wide, shared resources**, are not owned by the Helm release,
+and remain after uninstall. On clusters with another CRD manager or an experimental
+bundle, leave this hook disabled and have the cluster administrator install or
+upgrade XBackend out of band.
+
+The hook server-side applies with its own field manager (`<fullname>-crd-install`),
+so it can upgrade without ownership conflicts only bundles it applied earlier
+under the same release name and fullname. Manually installed bundles, a changed
+release name, or a changed `fullnameOverride` leave the previous field owner in
+place: keep upgrading those bundles out of band, or have an administrator
+explicitly approve the ownership transfer. `experimental.crdInstaller.forceConflicts=true`
+is only for that deliberate, one-off action, not a recommended fix; the chart never
+adopts existing bundles silently. Upstream safe-upgrade policies do not block a
+standard bundle from replacing experimental schemas. Do not change channels or
+bypass those policies. Helm rollback does not undo CRD changes. A failed hook Job
+and its RBAC remain after uninstall or disabling the hook; see the
+[chart README](charts/cloudflared-gateway/README.md#optional-gateway-api-crd-install-hook)
+for log and cleanup commands.
+
+Mapping and limitations:
+
+| XBackend spec | Behavior |
+|---------------|----------|
+| `protocol: HTTP`/`HTTP11` | HTTP origin |
+| `protocol: HTTP2`/`H2C` | HTTP/2 origin |
+| `protocol: TCP` (with `tls.mode: None` or unset) | `tcp://` origin |
+| `protocol: TCP` + `tls.mode != None` | **Unsupported** (cloudflared's `tcp://` proxy cannot verify origin TLS) — route reports `ResolvedRefs=False` (`UnsupportedProtocol`) |
+| `protocol: MCP` | **Unsupported** — route reports `ResolvedRefs=False` (`UnsupportedProtocol`) |
+| `tls.mode: None` | Plain HTTP origin |
+| `tls.mode: ServerOnly` | HTTPS origin, server certificate verified against system CAs; `validation.hostname` becomes the SNI server name |
+| `tls.mode: ServerOnly` + `validation.caCertificateRefs` | **Unsupported** (a custom CA pool isn't provisioned into cloudflared; use `wellKnownCACertificates: System`) — route reports `ResolvedRefs=False` (`UnsupportedCACerts`) |
+| `tls.mode: ServerOnly` + `validation.subjectAltNames` | **Unsupported** (custom SAN matching cannot be enforced) — route reports `ResolvedRefs=False` (`UnsupportedTLSValidation`) and XBackend reports `Accepted=False` |
+| `tls.mode: ClientAndServer` | **Unsupported** (cloudflared cannot present an origin client certificate) — route reports `ResolvedRefs=False` (`UnsupportedProtocol`) |
+
+The `XBackend` must match the transport of the referencing route kind. HTTPRoute
+and GRPCRoute reject `protocol: TCP`. A `TCPRoute` needs a `tcp://` origin
+(`protocol: TCP`, or unset). A `TLSRoute` needs either `tls.mode: ServerOnly`
+(an `https://` origin) or `protocol: TCP` (TLS stream passthrough). A mismatch
+reports `ResolvedRefs=False` (`IncompatibleRouteKind`). HTTPRoute serves 500;
+other route kinds use 503. This condition belongs to the route, not the
+`XBackend`'s `Accepted` condition.
+
+Each route rule uses only its first `backendRef` (`backendRefs[0]`); additional backends and `weight` are ignored, since a Cloudflare ingress rule maps to a single origin service. Weighted/multi-backend external origins are not supported.
+
+TLS `validation.hostname` controls certificate verification and SNI, not the
+HTTP Host header. For an origin that requires its own hostname, set an HTTPRoute
+`URLRewrite` hostname filter, as in `examples/xbackend.yaml`.
+
+Cross-namespace `XBackend` references require a `ReferenceGrant` in the backend's namespace (`to.group: gateway.networking.x-k8s.io`, `to.kind: XBackend`); otherwise the route reports `ResolvedRefs=False` with reason `RefNotPermitted`. XBackends report ancestor status under `status.ancestors[]`.
 
 ## Verifying releases
 

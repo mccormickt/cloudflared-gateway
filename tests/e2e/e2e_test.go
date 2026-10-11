@@ -36,10 +36,10 @@ func TestMain(m *testing.M) {
 		envfuncs.CreateCluster(kind.NewProvider(), kindClusterName),
 		envfuncs.CreateNamespace(testNamespace),
 		func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
-			// Install Gateway API CRDs (experimental, includes TLSRoute)
+			// Install the standard Gateway API bundle, including TLSRoute and TCPRoute.
 			// Use --server-side to avoid annotation size limits on large CRDs like HTTPRoute
 			cmd := exec.CommandContext(ctx, "kubectl", "apply", "--server-side", "-f",
-				fmt.Sprintf("https://github.com/kubernetes-sigs/gateway-api/releases/download/%s/experimental-install.yaml", gatewayAPIVersion()))
+				fmt.Sprintf("https://github.com/kubernetes-sigs/gateway-api/releases/download/%s/standard-install.yaml", gatewayAPIVersion()))
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				return ctx, fmt.Errorf("installing Gateway API CRDs: %s: %w", string(out), err)
