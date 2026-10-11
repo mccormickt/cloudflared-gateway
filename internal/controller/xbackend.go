@@ -60,9 +60,7 @@ type xbBackends struct {
 
 // backendTarget is a single backendRef discovered on an attached route, with
 // Gateway API defaulting applied: an omitted group means core, an omitted kind
-// means Service, and an omitted namespace means the route's own. The ref's port
-// is intentionally omitted — for an XBackend its own spec.port is authoritative,
-// and the native Service path reads the port straight off the ref.
+// means Service, and an omitted namespace means the route's own.
 type backendTarget struct {
 	routeNS   string
 	routeKind string
@@ -70,6 +68,7 @@ type backendTarget struct {
 	kind      string
 	ns        string
 	name      string
+	port      int
 }
 
 // isXBackend reports whether the target is an experimental XBackend.
@@ -112,6 +111,9 @@ func targetsFromObjRefs(routeNS, routeKind string, refs []gwapiv1.BackendObjectR
 	for _, r := range refs {
 		t := backendTarget{routeNS: routeNS, routeKind: routeKind, ns: routeNS, name: string(r.Name)}
 		t.group, t.kind = backendRefGroupKind(r)
+		if r.Port != nil {
+			t.port = int(*r.Port)
+		}
 		if r.Namespace != nil {
 			t.ns = string(*r.Namespace)
 		}
@@ -261,6 +263,9 @@ func (r *GatewayReconciler) backendResolver(xbCol *xbBackends, svcCol *svcBacken
 			ns:        ref.Namespace,
 			name:      ref.Name,
 		}
+		if ref.Port != nil {
+			t.port = *ref.Port
+		}
 		switch {
 		case t.isXBackend():
 			rb, _ := r.resolveXBackendRef(t, xbCol)
@@ -309,6 +314,11 @@ func translateXBackend(xb *apisxv1alpha1.XBackend, routeKind string) (cfclient.R
 
 	usesTLS := xb.Spec.TLS != nil && xb.Spec.TLS.Mode != apisxv1alpha1.BackendTLSModeNone
 
+	if proto == apisxv1alpha1.BackendProtocolH2C ||
+		(!usesTLS && (proto == apisxv1alpha1.BackendProtocolHTTP2 || proto == apisxv1alpha1.BackendProtocolGRPC)) {
+		return cfclient.ResolvedBackend{}, reasonUnsupportedProtocol
+	}
+
 	// cloudflared's tcp:// proxy is an opaque byte stream: it cannot perform
 	// origin TLS verification, so a TCP backend that asks for TLS would be
 	// silently downgraded to a raw connection. Fail closed instead.
@@ -318,7 +328,7 @@ func translateXBackend(xb *apisxv1alpha1.XBackend, routeKind string) (cfclient.R
 
 	origin := &cfclient.OriginRequest{}
 	switch proto {
-	case apisxv1alpha1.BackendProtocolHTTP2, apisxv1alpha1.BackendProtocolH2C, apisxv1alpha1.BackendProtocolGRPC:
+	case apisxv1alpha1.BackendProtocolHTTP2, apisxv1alpha1.BackendProtocolGRPC:
 		t := true
 		origin.HTTP2Origin = &t
 	}
@@ -345,11 +355,15 @@ func translateXBackend(xb *apisxv1alpha1.XBackend, routeKind string) (cfclient.R
 			if len(xb.Spec.TLS.Validation.CACertificateRefs) > 0 {
 				return cfclient.ResolvedBackend{}, reasonUnsupportedCACerts
 			}
-			if len(xb.Spec.TLS.Validation.SubjectAltNames) > 0 {
+			validation := xb.Spec.TLS.Validation
+			if len(validation.SubjectAltNames) > 0 ||
+				(validation.WellKnownCACertificates != nil && *validation.WellKnownCACertificates != gwapiv1.WellKnownCACertificatesSystem) {
 				return cfclient.ResolvedBackend{}, reasonUnsupportedTLSValidation
 			}
-			// Verify the origin certificate (NoTLSVerify left unset) and use the
-			// validation hostname as the SNI server name when provided.
+			// Certificate verification uses the backend's validation hostname,
+			// not the incoming request hostname or an origin policy override.
+			disabled := false
+			origin.MatchSNIToHost = &disabled
 			if h := string(xb.Spec.TLS.Validation.Hostname); h != "" {
 				origin.OriginServerName = &h
 			}
@@ -390,7 +404,7 @@ func translateXBackend(xb *apisxv1alpha1.XBackend, routeKind string) (cfclient.R
 
 // originRequestEmpty reports whether translateXBackend set any origin field.
 func originRequestEmpty(o *cfclient.OriginRequest) bool {
-	return o.HTTP2Origin == nil && o.OriginServerName == nil && o.NoTLSVerify == nil
+	return o.HTTP2Origin == nil && o.OriginServerName == nil && o.NoTLSVerify == nil && o.MatchSNIToHost == nil
 }
 
 // reasonSeverity orders ResolvedRefs reasons so a route with several failing
