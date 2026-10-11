@@ -110,7 +110,7 @@ func xbAcceptedCondition(generation int64, reason string) metav1.Condition {
 	}
 	if reason == reasonUnsupportedTLSValidation {
 		condReason = "UnsupportedTLSValidation"
-		message = "Backend specifies subjectAltNames, which cannot be enforced; omit subjectAltNames to verify the validation.hostname against system CAs"
+		message = "Backend requires unsupported subjectAltNames or CA trust; use hostname validation with system CAs"
 	}
 	return metav1.Condition{
 		Type:               "Accepted",

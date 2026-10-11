@@ -22,21 +22,19 @@ type svcKey struct {
 }
 
 // svcBackends is the per-reconcile resolution context for native Service
-// backendRefs: which Services exist and which cross-namespace references a
+// backendRefs: exposed ports and which cross-namespace references a
 // ReferenceGrant authorizes. A nil context resolves nothing, so every Service
 // ref fails closed.
 type svcBackends struct {
-	exists    map[svcKey]bool
+	ports     map[svcKey][]corev1.ServicePort
 	permitted map[permitKey]bool
 }
 
 // collectServiceBackends resolves every native Service target: it authorizes
-// cross-namespace references via ReferenceGrant and records which Services
-// exist. Unlike XBackends the objects themselves aren't retained — the ingress
-// URL is built from the ref, so only existence and authorization matter.
+// cross-namespace references via ReferenceGrant and records exposed ports.
 func (r *GatewayReconciler) collectServiceBackends(ctx context.Context, targets []backendTarget) (*svcBackends, error) {
 	col := &svcBackends{
-		exists:    map[svcKey]bool{},
+		ports:     map[svcKey][]corev1.ServicePort{},
 		permitted: map[permitKey]bool{},
 	}
 
@@ -61,16 +59,16 @@ func (r *GatewayReconciler) collectServiceBackends(ctx context.Context, targets 
 		}
 
 		key := svcKey{t.ns, t.name}
-		if _, done := col.exists[key]; done {
+		if _, done := col.ports[key]; done {
 			continue
 		}
 		var svc corev1.Service
 		err := r.Client.Get(ctx, types.NamespacedName{Namespace: t.ns, Name: t.name}, &svc)
 		switch {
 		case err == nil:
-			col.exists[key] = true
+			col.ports[key] = svc.Spec.Ports
 		case apierrors.IsNotFound(err):
-			col.exists[key] = false
+			col.ports[key] = nil
 		default:
 			return nil, err
 		}
@@ -88,13 +86,15 @@ func resolveServiceRef(t backendTarget, col *svcBackends) string {
 	if t.routeNS != t.ns && !col.permitted[t.permit()] {
 		return reasonRefNotPermitted
 	}
-	if !col.exists[svcKey{t.ns, t.name}] {
-		return reasonBackendNotFound
+	for _, port := range col.ports[svcKey{t.ns, t.name}] {
+		if int(port.Port) == t.port && (port.Protocol == "" || port.Protocol == corev1.ProtocolTCP) {
+			return reasonResolvedOK
+		}
 	}
-	return reasonResolvedOK
+	return reasonBackendNotFound
 }
 
-// serviceToGateways maps Service existence changes to Gateways whose routes
+// serviceToGateways maps Service existence and port changes to Gateways whose routes
 // reference that Service, including secondary and cross-namespace references.
 func (r *GatewayReconciler) serviceToGateways(ctx context.Context, svc client.Object) []reconcile.Request {
 	seen := map[reconcile.Request]bool{}

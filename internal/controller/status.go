@@ -164,7 +164,7 @@ func resolvedRefsResultFor(reason string) ResolvedRefsResult {
 	case reasonUnsupportedKind:
 		return ResolvedRefsResult{Reason: string(gwapiv1.RouteReasonInvalidKind), Message: "Backend refers to a kind this controller cannot route to; use a Service or an XBackend"}
 	case reasonBackendNotFound:
-		return ResolvedRefsResult{Reason: string(gwapiv1.RouteReasonBackendNotFound), Message: "Referenced backend does not exist"}
+		return ResolvedRefsResult{Reason: string(gwapiv1.RouteReasonBackendNotFound), Message: "Referenced backend does not exist or Service does not expose the referenced TCP port"}
 	case reasonRefNotPermitted:
 		return ResolvedRefsResult{Reason: string(gwapiv1.RouteReasonRefNotPermitted), Message: "Cross-namespace backend reference is not permitted by any ReferenceGrant"}
 	case reasonIncompatibleRouteKind:
@@ -174,7 +174,7 @@ func resolvedRefsResultFor(reason string) ResolvedRefsResult {
 	case reasonUnsupportedCACerts:
 		return ResolvedRefsResult{Reason: "UnsupportedCACerts", Message: "Referenced XBackend pins custom caCertificateRefs, which are not supported; use wellKnownCACertificates: System"}
 	case reasonUnsupportedTLSValidation:
-		return ResolvedRefsResult{Reason: "UnsupportedTLSValidation", Message: "Referenced XBackend specifies subjectAltNames, which cannot be enforced; omit subjectAltNames to verify the validation.hostname against system CAs"}
+		return ResolvedRefsResult{Reason: "UnsupportedTLSValidation", Message: "Referenced XBackend requires unsupported subjectAltNames or CA trust; use hostname validation with system CAs"}
 	default:
 		return ResolvedRefsResult{Reason: "InvalidBackend", Message: "Referenced backend could not be resolved"}
 	}

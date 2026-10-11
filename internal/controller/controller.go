@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"reflect"
 
 	cfv1alpha1 "github.com/mccormickt/cloudflared-gateway/api/v1alpha1"
 	"github.com/mccormickt/cloudflared-gateway/internal/cloudflare"
@@ -108,11 +109,13 @@ func (r *GatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	c = c.Watches(&gwapiv1.ReferenceGrant{},
 		handler.EnqueueRequestsFromMapFunc(r.allGatewaysRequests))
 
-	// Service creation and deletion change whether backend references resolve.
+	// Service existence and exposed ports determine whether backend references resolve.
 	c = c.Watches(&corev1.Service{},
 		handler.EnqueueRequestsFromMapFunc(r.serviceToGateways),
 		builder.WithPredicates(predicate.Funcs{
-			UpdateFunc:  func(event.UpdateEvent) bool { return false },
+			UpdateFunc: func(e event.UpdateEvent) bool {
+				return !reflect.DeepEqual(e.ObjectOld.(*corev1.Service).Spec.Ports, e.ObjectNew.(*corev1.Service).Spec.Ports)
+			},
 			GenericFunc: func(event.GenericEvent) bool { return false },
 		}))
 

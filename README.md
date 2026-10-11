@@ -142,7 +142,7 @@ The full chart value reference lives in [`charts/cloudflared-gateway/values.yaml
 
 ### Backend references
 
-Every route's `backendRefs[0]` is resolved before it reaches the tunnel config. A ref must name a `Service` in the core group (the Gateway API default) or, with the experimental feature on, an [`XBackend`](#experimental-external-origins-xbackend); any other kind is rejected. The referenced object must exist, and a ref that crosses namespaces must be authorized by a `ReferenceGrant` in the *backend's* namespace.
+Every route's `backendRefs[0]` is resolved before it reaches the tunnel config. A ref must name a `Service` in the core group (the Gateway API default) or, with the experimental feature on, an [`XBackend`](#experimental-external-origins-xbackend); any other kind is rejected. The referenced object must exist, and a Service must expose the referenced TCP port. A ref that crosses namespaces must be authorized by a `ReferenceGrant` in the *backend's* namespace.
 
 A ref that fails any of these reports `ResolvedRefs=False`. HTTPRoute serves
 `http_status:500`, as required by Gateway API; other route kinds use
@@ -150,11 +150,11 @@ A ref that fails any of these reports `ResolvedRefs=False`. HTTPRoute serves
 
 | Condition | Reason |
 |-----------|--------|
-| Backend object does not exist | `BackendNotFound` |
+| Backend object does not exist, or Service does not expose the referenced TCP port | `BackendNotFound` |
 | Cross-namespace ref with no matching `ReferenceGrant` | `RefNotPermitted` |
 | `kind` is neither `Service` nor `XBackend` | `InvalidKind` |
 
-A route with several failing refs reports the most actionable one. Services and grants are watched: creating a missing Service or a required `ReferenceGrant` restores routing without changing the route, and deleting either stops serving it.
+A route with several failing refs reports the most actionable one. Services and grants are watched: creating a missing Service or a required `ReferenceGrant` restores routing without changing the route, deleting either stops serving it, and Service port changes update routing and status.
 
 ### Origin request tuning (CloudflareOriginPolicy)
 
@@ -329,14 +329,15 @@ Mapping and limitations:
 | XBackend spec | Behavior |
 |---------------|----------|
 | `protocol: HTTP`/`HTTP11` | HTTP origin |
-| `protocol: HTTP2`/`H2C` | HTTP/2 origin |
+| `protocol: HTTP2`/`GRPC` + `tls.mode: ServerOnly` | HTTPS origin with HTTP/2 negotiation enabled |
+| `protocol: H2C`, or `HTTP2`/`GRPC` without TLS | **Unsupported** — route reports `ResolvedRefs=False` (`UnsupportedProtocol`) |
 | `protocol: TCP` (with `tls.mode: None` or unset) | `tcp://` origin |
 | `protocol: TCP` + `tls.mode != None` | **Unsupported** (cloudflared's `tcp://` proxy cannot verify origin TLS) — route reports `ResolvedRefs=False` (`UnsupportedProtocol`) |
 | `protocol: MCP` | **Unsupported** — route reports `ResolvedRefs=False` (`UnsupportedProtocol`) |
 | `tls.mode: None` | Plain HTTP origin |
-| `tls.mode: ServerOnly` | HTTPS origin, server certificate verified against system CAs; `validation.hostname` becomes the SNI server name |
+| `tls.mode: ServerOnly` | HTTPS origin, server certificate verified against system CAs; `validation.hostname` controls SNI and certificate verification, regardless of `matchSNIToHost` origin policies |
 | `tls.mode: ServerOnly` + `validation.caCertificateRefs` | **Unsupported** (a custom CA pool isn't provisioned into cloudflared; use `wellKnownCACertificates: System`) — route reports `ResolvedRefs=False` (`UnsupportedCACerts`) |
-| `tls.mode: ServerOnly` + `validation.subjectAltNames` | **Unsupported** (custom SAN matching cannot be enforced) — route reports `ResolvedRefs=False` (`UnsupportedTLSValidation`) and XBackend reports `Accepted=False` |
+| `tls.mode: ServerOnly` + `validation.subjectAltNames` or non-System `wellKnownCACertificates` | **Unsupported** — route reports `ResolvedRefs=False` (`UnsupportedTLSValidation`) and XBackend reports `Accepted=False` |
 | `tls.mode: ClientAndServer` | **Unsupported** (cloudflared cannot present an origin client certificate) — route reports `ResolvedRefs=False` (`UnsupportedProtocol`) |
 
 The `XBackend` must match the transport of the referencing route kind. HTTPRoute

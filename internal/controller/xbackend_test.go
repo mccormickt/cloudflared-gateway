@@ -7,6 +7,7 @@ import (
 
 	cfclient "github.com/mccormickt/cloudflared-gateway/internal/cloudflare"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -99,6 +100,21 @@ func TestTranslateXBackend(t *testing.T) {
 		{
 			name:       "mcp unsupported",
 			xb:         makeXBackend("ns", "a", "api.example.com", 443, protoPtr(apisxv1alpha1.BackendProtocolMCP), nil),
+			wantReason: reasonUnsupportedProtocol,
+		},
+		{
+			name:       "h2c unsupported",
+			xb:         makeXBackend("ns", "a", "api.example.com", 80, protoPtr(apisxv1alpha1.BackendProtocolH2C), nil),
+			wantReason: reasonUnsupportedProtocol,
+		},
+		{
+			name:       "cleartext http2 unsupported",
+			xb:         makeXBackend("ns", "a", "api.example.com", 80, protoPtr(apisxv1alpha1.BackendProtocolHTTP2), nil),
+			wantReason: reasonUnsupportedProtocol,
+		},
+		{
+			name:       "cleartext grpc unsupported",
+			xb:         makeXBackend("ns", "a", "api.example.com", 80, protoPtr(apisxv1alpha1.BackendProtocolGRPC), tlsNone),
 			wantReason: reasonUnsupportedProtocol,
 		},
 		{
@@ -286,7 +302,7 @@ func TestTranslateXBackend_RouteKindCompatibility(t *testing.T) {
 
 func TestResolveServiceRef(t *testing.T) {
 	svcTarget := func(routeNS, svcNS, name string) backendTarget {
-		return backendTarget{routeNS: routeNS, routeKind: "HTTPRoute", kind: serviceKind, ns: svcNS, name: name}
+		return backendTarget{routeNS: routeNS, routeKind: "HTTPRoute", kind: serviceKind, ns: svcNS, name: name, port: 80}
 	}
 
 	t.Run("nil context fails closed", func(t *testing.T) {
@@ -296,21 +312,21 @@ func TestResolveServiceRef(t *testing.T) {
 	})
 
 	t.Run("same-ns existing -> OK", func(t *testing.T) {
-		col := &svcBackends{exists: map[svcKey]bool{{"apps", "svc"}: true}, permitted: map[permitKey]bool{}}
+		col := &svcBackends{ports: map[svcKey][]corev1.ServicePort{{"apps", "svc"}: {{Port: 80}}}, permitted: map[permitKey]bool{}}
 		if got := resolveServiceRef(svcTarget("apps", "apps", "svc"), col); got != reasonResolvedOK {
 			t.Errorf("got %q, want OK", got)
 		}
 	})
 
 	t.Run("same-ns missing -> BackendNotFound", func(t *testing.T) {
-		col := &svcBackends{exists: map[svcKey]bool{{"apps", "svc"}: false}, permitted: map[permitKey]bool{}}
+		col := &svcBackends{ports: map[svcKey][]corev1.ServicePort{}, permitted: map[permitKey]bool{}}
 		if got := resolveServiceRef(svcTarget("apps", "apps", "svc"), col); got != reasonBackendNotFound {
 			t.Errorf("got %q, want BackendNotFound", got)
 		}
 	})
 
 	t.Run("cross-ns without grant -> RefNotPermitted", func(t *testing.T) {
-		col := &svcBackends{exists: map[svcKey]bool{{"other", "svc"}: true}, permitted: map[permitKey]bool{}}
+		col := &svcBackends{ports: map[svcKey][]corev1.ServicePort{{"other", "svc"}: {{Port: 80}}}, permitted: map[permitKey]bool{}}
 		if got := resolveServiceRef(svcTarget("apps", "other", "svc"), col); got != reasonRefNotPermitted {
 			t.Errorf("got %q, want RefNotPermitted", got)
 		}
@@ -318,7 +334,7 @@ func TestResolveServiceRef(t *testing.T) {
 
 	t.Run("cross-ns with grant -> OK", func(t *testing.T) {
 		col := &svcBackends{
-			exists:    map[svcKey]bool{{"other", "svc"}: true},
+			ports:     map[svcKey][]corev1.ServicePort{{"other", "svc"}: {{Port: 80}}},
 			permitted: map[permitKey]bool{{routeNS: "apps", routeKind: "HTTPRoute", toNS: "other", name: "svc"}: true},
 		}
 		if got := resolveServiceRef(svcTarget("apps", "other", "svc"), col); got != reasonResolvedOK {
@@ -330,10 +346,11 @@ func TestResolveServiceRef(t *testing.T) {
 func TestRouteResolvedRefs(t *testing.T) {
 	r := &GatewayReconciler{ExperimentalBackends: true}
 	col := &xbBackends{fetched: map[xbKey]*apisxv1alpha1.XBackend{}, permitted: map[permitKey]bool{}}
-	svcCol := &svcBackends{exists: map[svcKey]bool{{"apps", "svc"}: true}, permitted: map[permitKey]bool{}}
+	svcCol := &svcBackends{ports: map[svcKey][]corev1.ServicePort{{"apps", "svc"}: {{Port: 80}}}, permitted: map[permitKey]bool{}}
 
 	t.Run("existing service ref -> OK", func(t *testing.T) {
-		refs := []gwapiv1.BackendObjectReference{{Name: "svc"}}
+		port := gwapiv1.PortNumber(80)
+		refs := []gwapiv1.BackendObjectReference{{Name: "svc", Port: &port}}
 		res := r.routeResolvedRefs("apps", "HTTPRoute", refs, col, svcCol)
 		if !res.OK || res.Reason != string(gwapiv1.RouteReasonResolvedRefs) {
 			t.Errorf("got %+v, want OK/ResolvedRefs", res)

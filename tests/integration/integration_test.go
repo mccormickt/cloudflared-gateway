@@ -972,6 +972,24 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 			}
 			return false
 		}, 10*time.Second, 100*time.Millisecond, "creating the missing Service should restore routing and ResolvedRefs")
+		for _, port := range []v1.ServicePort{{Port: 8080}, {Port: 80, Protocol: v1.ProtocolUDP}, {Port: 80, Protocol: v1.ProtocolTCP}} {
+			late.Spec.Ports = []v1.ServicePort{port}
+			if err := k8sClient.Update(ctx, late); err != nil {
+				t.Fatal(err)
+			}
+			wantService, wantStatus, wantReason := "http_status:500", metav1.ConditionFalse, "BackendNotFound"
+			if port.Port == 80 && port.Protocol == v1.ProtocolTCP {
+				wantService, wantStatus, wantReason = "http://no-such-svc.default:80", metav1.ConditionTrue, "ResolvedRefs"
+			}
+			requireEventually(t, func() bool {
+				for _, rule := range mock.getLastIngress(gw.Name) {
+					if rule.Hostname == "missing.example.com" {
+						return rule.Service == wantService && routeResolvedRefsIs(ctx, t, missing.Name, missing.Namespace, wantStatus, wantReason)
+					}
+				}
+				return false
+			}, 10*time.Second, 100*time.Millisecond, "Service port changes must update routing and ResolvedRefs")
+		}
 		if err := k8sClient.Delete(ctx, late); err != nil {
 			t.Fatal(err)
 		}
@@ -1155,6 +1173,19 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 		}
 		t.Cleanup(func() { k8sClient.Delete(ctx, gw) })
 
+		matchSNI := true
+		policy := &cfv1alpha1.CloudflareOriginPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "integ-xbackend-origin", Namespace: "default"},
+			Spec: cfv1alpha1.CloudflareOriginPolicySpec{
+				TargetRefs:     []gwapiv1.LocalPolicyTargetReference{{Group: gwapiv1.GroupName, Kind: "Gateway", Name: gwapiv1.ObjectName(gw.Name)}},
+				MatchSNIToHost: &matchSNI,
+			},
+		}
+		if err := k8sClient.Create(ctx, policy); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { k8sClient.Delete(ctx, policy) })
+
 		systemCA := gwapiv1.WellKnownCACertificatesSystem
 		xb := &apisxv1alpha1.XBackend{
 			ObjectMeta: metav1.ObjectMeta{Name: "integ-openai", Namespace: "default"},
@@ -1206,7 +1237,8 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 					return r.OriginRequest != nil &&
 						r.OriginRequest.OriginServerName != nil &&
 						*r.OriginRequest.OriginServerName == "api.example.com" &&
-						r.OriginRequest.NoTLSVerify == nil
+						r.OriginRequest.NoTLSVerify == nil &&
+						r.OriginRequest.MatchSNIToHost != nil && !*r.OriginRequest.MatchSNIToHost
 				}
 			}
 			return false
