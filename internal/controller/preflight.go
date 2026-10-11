@@ -92,7 +92,7 @@ func preflightCheckCRDs(ctx context.Context, dc discovery.DiscoveryInterface, dy
 			if gvr.Group == xBackendGroup {
 				return fmt.Errorf("experimental backends are enabled but %s/%s resource %q is not served; install the XBackend CRD from Gateway API %s (`make install-xbackend-crd`) or disable experimental.backends.enabled / --enable-experimental-backends", gvr.Group, gvr.Version, gvr.Resource, builtVersion)
 			}
-			return fmt.Errorf("required Gateway API resource %s/%s %q is not served; install the Gateway API %s standard bundle (`make install-crds`) or set experimental.installGatewayAPICRDs=true in the Helm chart", gvr.Group, gvr.Version, gvr.Resource, builtVersion)
+			return fmt.Errorf("required Gateway API resource %s/%s %q is not served; install the Gateway API %s standard bundle (`make install-crds`) or set gatewayAPI.enabled=true in the Helm chart for a fresh cluster", gvr.Group, gvr.Version, gvr.Resource, builtVersion)
 		}
 	}
 

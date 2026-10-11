@@ -39,7 +39,7 @@ test-unit: ## Run unit tests (no cluster required)
 
 test-chart: ## Check Helm CRD installation safety (requires Helm)
 	helm lint charts/cloudflared-gateway
-	bash scripts/test-chart.sh
+	go test ./tests/chart/ -count=1
 
 test-integration: ## Run envtest against standard, experimental, and standard plus XBackend
 	GATEWAY_API_TEST_CHANNEL=standard KUBEBUILDER_ASSETS=$(KUBEBUILDER_ASSETS) go test ./tests/integration/ -timeout 120s -v -count=1

@@ -1,0 +1,7 @@
+apiVersion: v2
+name: gateway-api-crds
+description: Gateway API experimental CRDs and safe-upgrade admission policies
+type: application
+version: 1.6.3
+kubeVersion: ">=1.30.0-0"
+home: https://gateway-api.sigs.k8s.io/

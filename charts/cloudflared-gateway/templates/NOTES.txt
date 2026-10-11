@@ -1,3 +1,6 @@
+{{- if .Values.experimental.installGatewayAPICRDs }}
+{{- fail "experimental.installGatewayAPICRDs is no longer supported; use gatewayAPI.enabled for fresh clusters or manage Gateway API separately" }}
+{{- end }}
 {{ .Chart.Name }} {{ .Chart.AppVersion }} has been installed into namespace "{{ .Release.Namespace }}".
 
 1. Verify the controller pod is running:
