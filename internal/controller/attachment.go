@@ -46,7 +46,7 @@ func routeAttachmentHostnames(
 	var effective []gwapiv1.Hostname
 
 	for _, listener := range gw.Spec.Listeners {
-		if !parentRefsSelectListener(parentRefs, gw, listener) || !isKindAllowed(listener, routeKind) {
+		if !parentRefsSelectListener(parentRefs, gw, listener, routeNS) || !isKindAllowed(listener, routeKind) {
 			continue
 		}
 
@@ -76,9 +76,9 @@ func routeAttachmentHostnames(
 	return effective, len(effective) > 0, nil
 }
 
-func parentRefsSelectListener(parentRefs []gwapiv1.ParentReference, gw *gwapiv1.Gateway, listener gwapiv1.Listener) bool {
+func parentRefsSelectListener(parentRefs []gwapiv1.ParentReference, gw *gwapiv1.Gateway, listener gwapiv1.Listener, routeNS string) bool {
 	for _, ref := range parentRefs {
-		if !parentRefReferencesGateway(ref, gw) {
+		if !parentRefReferencesGateway(ref, gw, routeNS) {
 			continue
 		}
 		if ref.SectionName != nil && *ref.SectionName != listener.Name {
@@ -92,7 +92,7 @@ func parentRefsSelectListener(parentRefs []gwapiv1.ParentReference, gw *gwapiv1.
 	return false
 }
 
-func parentRefReferencesGateway(ref gwapiv1.ParentReference, gw *gwapiv1.Gateway) bool {
+func parentRefReferencesGateway(ref gwapiv1.ParentReference, gw *gwapiv1.Gateway, routeNS string) bool {
 	group := gwapiv1.GroupName
 	if ref.Group != nil {
 		group = string(*ref.Group)
@@ -105,7 +105,7 @@ func parentRefReferencesGateway(ref gwapiv1.ParentReference, gw *gwapiv1.Gateway
 		return false
 	}
 
-	namespace := gw.Namespace
+	namespace := routeNS
 	if ref.Namespace != nil {
 		namespace = string(*ref.Namespace)
 	}

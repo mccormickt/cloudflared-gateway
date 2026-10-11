@@ -402,11 +402,13 @@ func TestReconcile_DNSFailureMarksProgrammedFalse(t *testing.T) {
 
 func TestReconcile_DNSUsesSelectedListener(t *testing.T) {
 	for _, tc := range []struct {
-		name      string
-		hostnames []gwapiv1.Hostname
-		section   gwapiv1.SectionName
-		port      gwapiv1.PortNumber
-		want      string
+		name           string
+		hostnames      []gwapiv1.Hostname
+		section        gwapiv1.SectionName
+		port           gwapiv1.PortNumber
+		routeNamespace string
+		omitParentNS   bool
+		want           string
 	}{
 		{name: "hostname intersection", hostnames: []gwapiv1.Hostname{"app.example.com", "private.example.com"}, section: "public", want: "app.example.com"},
 		{name: "listener hostname inherited", section: "public", want: "app.example.com"},
@@ -415,15 +417,29 @@ func TestReconcile_DNSUsesSelectedListener(t *testing.T) {
 		{name: "no matching section", hostnames: []gwapiv1.Hostname{"app.example.com"}, section: "missing"},
 		{name: "port selects listener", hostnames: []gwapiv1.Hostname{"app.example.com", "private.example.com"}, port: 8080, want: "private.example.com"},
 		{name: "no matching port", hostnames: []gwapiv1.Hostname{"app.example.com"}, port: 9090},
+		{name: "implicit same namespace", section: "public", omitParentNS: true, want: "app.example.com"},
+		{name: "implicit foreign namespace", section: "public", routeNamespace: "tenant", omitParentNS: true},
+		{name: "explicit foreign namespace", section: "public", routeNamespace: "tenant", want: "app.example.com"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			gw := makeGateway("gw", "default")
 			public, private := gwapiv1.Hostname("app.example.com"), gwapiv1.Hostname("private.example.com")
+			from := gwapiv1.NamespacesFromAll
+			allowed := &gwapiv1.AllowedRoutes{Namespaces: &gwapiv1.RouteNamespaces{From: &from}}
 			gw.Spec.Listeners = []gwapiv1.Listener{
-				{Name: "public", Port: 80, Protocol: gwapiv1.HTTPProtocolType, Hostname: &public},
-				{Name: "private", Port: 8080, Protocol: gwapiv1.HTTPProtocolType, Hostname: &private},
+				{Name: "public", Port: 80, Protocol: gwapiv1.HTTPProtocolType, Hostname: &public, AllowedRoutes: allowed},
+				{Name: "private", Port: 8080, Protocol: gwapiv1.HTTPProtocolType, Hostname: &private, AllowedRoutes: allowed},
 			}
-			route := makeHTTPRoute("web", "default", "gw")
+			routeNS := "default"
+			if tc.routeNamespace != "" {
+				routeNS = tc.routeNamespace
+			}
+			route := makeHTTPRoute("web", routeNS, "gw")
+			parentNS := gwapiv1.Namespace(gw.Namespace)
+			route.Spec.ParentRefs[0].Namespace = &parentNS
+			if tc.omitParentNS {
+				route.Spec.ParentRefs[0].Namespace = nil
+			}
 			route.Spec.Hostnames = tc.hostnames
 			if tc.section != "" {
 				route.Spec.ParentRefs[0].SectionName = &tc.section
