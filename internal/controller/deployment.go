@@ -13,7 +13,7 @@ import (
 )
 
 // ContainerImage is the default cloudflared container image used in the tunnel deployment.
-const ContainerImage = "cloudflare/cloudflared:2024.12.2"
+const ContainerImage = "cloudflare/cloudflared:2026.10.3"
 
 // defaultMetricsPort is the default cloudflared metrics port.
 const defaultMetricsPort int32 = 2000

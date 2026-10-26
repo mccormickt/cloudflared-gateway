@@ -139,7 +139,7 @@ func TestBuildCloudflaredDeployment_DefaultsWhenNil(t *testing.T) {
 	if d.Spec.Replicas == nil || *d.Spec.Replicas != 2 {
 		t.Errorf("expected default replicas=2, got %v", d.Spec.Replicas)
 	}
-	if d.Spec.Template.Spec.Containers[0].Image != ContainerImage {
+	if d.Spec.Template.Spec.Containers[0].Image != "cloudflare/cloudflared:2026.10.3" {
 		t.Errorf("expected default image, got %q", d.Spec.Template.Spec.Containers[0].Image)
 	}
 }

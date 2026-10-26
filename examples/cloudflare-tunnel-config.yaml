@@ -8,7 +8,7 @@ metadata:
   namespace: default
 spec:
   replicas: 3
-  image: cloudflare/cloudflared:2024.12.2
+  image: cloudflare/cloudflared:2026.10.3
   logLevel: info
   metricsPort: 2000
   resources:
