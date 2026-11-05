@@ -112,6 +112,10 @@ func xbAcceptedCondition(generation int64, reason string) metav1.Condition {
 		condReason = "UnsupportedTLSValidation"
 		message = "Backend requires unsupported subjectAltNames or CA trust; use hostname validation with system CAs"
 	}
+	if reason == reasonInvalidBackendPort {
+		condReason = reasonInvalidBackendPort
+		message = "Set spec.port.number to a value from 1 through 65535; migrate spec.port.port to spec.port.number when upgrading from v1.6"
+	}
 	return metav1.Condition{
 		Type:               "Accepted",
 		Status:             metav1.ConditionFalse,

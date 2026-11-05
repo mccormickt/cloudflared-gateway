@@ -32,6 +32,7 @@ const (
 	reasonUnsupportedProtocol      = "UnsupportedProtocol"      // a protocol/TLS mode cloudflared tunnels can't serve
 	reasonUnsupportedCACerts       = "UnsupportedCACerts"       // TLS validation pins custom caCertificateRefs we can't provision
 	reasonUnsupportedTLSValidation = "UnsupportedTLSValidation" // custom certificate SAN matching cannot be enforced
+	reasonInvalidBackendPort       = "InvalidBackendPort"       // invalid destination port or prohibited reference port
 )
 
 // xbKey identifies an XBackend object.
@@ -241,6 +242,9 @@ func (r *GatewayReconciler) resolveXBackendRef(t backendTarget, col *xbBackends)
 	if t.routeNS != t.ns && !col.permitted[t.permit()] {
 		return cfclient.ResolvedBackend{}, reasonRefNotPermitted
 	}
+	if t.port != 0 {
+		return cfclient.ResolvedBackend{}, reasonInvalidBackendPort
+	}
 	xb := col.fetched[xbKey{t.ns, t.name}]
 	if xb == nil {
 		return cfclient.ResolvedBackend{}, reasonBackendNotFound
@@ -296,7 +300,10 @@ func translateXBackend(xb *apisxv1alpha1.XBackend, routeKind string) (cfclient.R
 		return cfclient.ResolvedBackend{}, reasonUnsupportedProtocol
 	}
 	host := string(xb.Spec.ExternalHostname.Hostname)
-	port := int(xb.Spec.Port.Port)
+	port := int(xb.Spec.Port.Number)
+	if port < 1 || port > 65535 {
+		return cfclient.ResolvedBackend{}, reasonInvalidBackendPort
+	}
 
 	// Gateway API treats an unset protocol as "whatever the route or listener
 	// determined", so a TCPRoute's backend defaults to TCP rather than HTTP.
@@ -307,15 +314,18 @@ func translateXBackend(xb *apisxv1alpha1.XBackend, routeKind string) (cfclient.R
 	if xb.Spec.Protocol != nil {
 		proto = *xb.Spec.Protocol
 	}
-	// Cloudflare tunnels can't proxy MCP as a first-class protocol.
-	if proto == apisxv1alpha1.BackendProtocolMCP {
+	// Only protocols with a supported tunnel mapping are accepted.
+	switch proto {
+	case apisxv1alpha1.BackendProtocolHTTP, apisxv1alpha1.BackendProtocolHTTP11,
+		apisxv1alpha1.BackendProtocolHTTP2, apisxv1alpha1.BackendProtocolGRPC,
+		apisxv1alpha1.BackendProtocolTCP:
+	default:
 		return cfclient.ResolvedBackend{}, reasonUnsupportedProtocol
 	}
 
 	usesTLS := xb.Spec.TLS != nil && xb.Spec.TLS.Mode != apisxv1alpha1.BackendTLSModeNone
 
-	if proto == apisxv1alpha1.BackendProtocolH2C ||
-		(!usesTLS && (proto == apisxv1alpha1.BackendProtocolHTTP2 || proto == apisxv1alpha1.BackendProtocolGRPC)) {
+	if !usesTLS && (proto == apisxv1alpha1.BackendProtocolHTTP2 || proto == apisxv1alpha1.BackendProtocolGRPC) {
 		return cfclient.ResolvedBackend{}, reasonUnsupportedProtocol
 	}
 
@@ -348,6 +358,9 @@ func translateXBackend(xb *apisxv1alpha1.XBackend, routeKind string) (cfclient.R
 			// remote-managed cloudflared tunnels cannot do.
 			return cfclient.ResolvedBackend{}, reasonUnsupportedProtocol
 		case apisxv1alpha1.BackendTLSModeServerOnly:
+			if xb.Spec.TLS.Validation == nil {
+				return cfclient.ResolvedBackend{}, reasonUnsupportedTLSValidation
+			}
 			// A custom CA pin (caCertificateRefs) would have to be provisioned into
 			// the cloudflared Deployment and pointed at via originRequest.caPool,
 			// which isn't wired up — verifying against the system CAs instead would
@@ -421,7 +434,7 @@ func reasonSeverity(reason string) int {
 		return 4
 	case reasonIncompatibleRouteKind:
 		return 3
-	case reasonUnsupportedProtocol:
+	case reasonUnsupportedProtocol, reasonInvalidBackendPort:
 		return 2
 	case reasonUnsupportedCACerts, reasonUnsupportedTLSValidation:
 		return 1

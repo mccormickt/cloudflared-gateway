@@ -143,8 +143,8 @@ func TestGatewayAPIBundle(t *testing.T) {
 		name, version, value string
 		wantError            bool
 	}{
-		{"bundle minimum", "1.30.0", "gatewayAPI.enabled=true", false},
-		{"bundle unsupported", "1.29.0", "gatewayAPI.enabled=true", true},
+		{"bundle minimum", "1.32.0", "gatewayAPI.enabled=true", false},
+		{"bundle unsupported", "1.31.0", "gatewayAPI.enabled=true", true},
 		{"external bundle", "1.28.0", "gatewayAPI.enabled=false", false},
 		{"retired installer", "1.35.0", "experimental.installGatewayAPICRDs=true", true},
 	} {

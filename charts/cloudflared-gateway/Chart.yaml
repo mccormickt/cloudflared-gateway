@@ -18,5 +18,5 @@ maintainers:
     email: mccormickt9@gmail.com
 dependencies:
   - name: gateway-api-crds
-    version: 1.6.3
+    version: 1.7.0
     condition: gatewayAPI.enabled

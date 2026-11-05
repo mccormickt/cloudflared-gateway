@@ -70,8 +70,8 @@ kubectl -n cloudflared-gateway create secret generic cloudflare-creds \
 | `podLabels` | object | `{}` | Additional labels added to the controller pod. |
 | `extraEnv` | list | `[]` | Extra environment variables merged into the `manager` container after the Cloudflare credential vars. |
 | `dns.enabled` | bool | `false` | Manage proxied CNAME records for attached route hostnames. Requires Zone:Read and DNS:Edit. Leave disabled when ExternalDNS owns these records. |
-| `gatewayAPI.enabled` | bool | `false` | Bundle Gateway API v1.6.3 experimental CRDs and safe-upgrade policies. Requires Kubernetes 1.30+. Uses the installer's permissions, not pod RBAC. |
-| `experimental.backends.enabled` | bool | `false` | Enable XBackend support. Requires the XBackend CRD; the stable CRDs can remain on the standard channel. |
+| `gatewayAPI.enabled` | bool | `false` | Bundle Gateway API v1.7.0 experimental CRDs and safe-upgrade policies. Requires Kubernetes 1.32+. Uses the installer's permissions, not pod RBAC. |
+| `experimental.backends.enabled` | bool | `false` | Enable XBackend support. Requires Kubernetes 1.32+ and the v1.7.x XBackend CRD; the stable CRDs can remain on the standard channel. |
 
 ## Gateway API ownership
 
@@ -80,7 +80,7 @@ the controller and leave `gatewayAPI.enabled=false`. This keeps shared CRDs and
 admission policies outside the application release.
 
 **Fresh cluster:** Add `--set gatewayAPI.enabled=true` to the Helm install. The
-vendored dependency installs the v1.6.3 experimental CRDs and upstream
+vendored dependency installs the v1.7.0 experimental CRDs and upstream
 safe-upgrade policy/binding. The Helm caller needs cluster permissions to install
 these resources; neither the controller nor an installer pod receives CRD or
 admission-policy write permissions. No installation Job runs.
@@ -148,6 +148,32 @@ chart, it does not upgrade CRDs: apply its `crds/` first, then upgrade its Helm
 release to update release-owned safe-upgrade policies. Do not force field
 ownership conflicts or remove an existing safe-upgrade policy to bypass a
 channel/version rejection; coordinate that change with the cluster administrator.
+
+For the Gateway API v1.6 to v1.7 migration, update existing XBackend objects to
+use `spec.port.number` instead of `spec.port.port`, and omit `backendRef.port`
+from routes targeting them. There is no automatic field conversion. Use this order:
+
+1. Save the existing XBackend and route manifests, and prepare the updated manifests.
+2. Stop **all old controller replicas** and wait for them to exit. Suspend any
+   automation that can restart them. Leave the cloudflared deployments running
+   with their existing tunnel configuration.
+3. Apply matching GA v1.7.x CRDs through their existing owner and the safe-upgrade
+   workflow above, then apply the updated XBackend and route manifests.
+4. Upgrade the controller release and start the new controller only after the
+   objects are migrated. Do not use a rolling controller update across this
+   schema change: an old controller can read `spec.port.number` as zero and push
+   an invalid origin port.
+
+An unmigrated XBackend reports `Accepted=False` and its routes report
+`ResolvedRefs=False`, both with reason `InvalidBackendPort`, instead of routing
+to port zero. The XBackend CRD needs Kubernetes 1.32+ for its CEL validation.
+`tls.validation` remains required by the CRD for `tls.mode: ServerOnly`, even
+though validation is optional in the Go API type.
+
+External hostname backends remain supported. `EndpointSelector` and session
+persistence remain unsupported and are rejected. Supported XBackend protocols
+are HTTP, HTTP11, HTTP2/GRPC with ServerOnly TLS, and plain TCP. H2C, MCP, mutual
+TLS, and WSS (introduced in v1.7) are unsupported and rejected.
 
 The chart does not fetch CRDs over the network. Plain `helm upgrade` does not
 update the Gateway API CRDs. The controller's startup checks report missing or

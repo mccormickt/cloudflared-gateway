@@ -1,5 +1,5 @@
-{{- if not (semverCompare ">=1.30.0-0" .Capabilities.KubeVersion.Version) }}
-{{- fail "the bundled Gateway API safe-upgrade policies require Kubernetes 1.30+; install Gateway API separately on older clusters" }}
+{{- if not (semverCompare ">=1.32.0-0" .Capabilities.KubeVersion.Version) }}
+{{- fail "the bundled Gateway API CRDs require Kubernetes 1.32+ for XBackend validation; install a compatible Gateway API bundle separately on older clusters" }}
 {{- end }}
 {{- $name := "safe-upgrades.gateway.networking.k8s.io" }}
 {{- $policy := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicy" "" $name }}

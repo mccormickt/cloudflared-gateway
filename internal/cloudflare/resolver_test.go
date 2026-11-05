@@ -9,17 +9,15 @@ import (
 const xbackendGroup = "gateway.networking.x-k8s.io"
 
 // xbackendRef builds an HTTPBackendRef pointing at an XBackend.
-func xbackendHTTPRef(name string, port int) gwapiv1.HTTPBackendRef {
+func xbackendHTTPRef(name string) gwapiv1.HTTPBackendRef {
 	group := gwapiv1.Group(xbackendGroup)
 	kind := gwapiv1.Kind("XBackend")
-	p := gwapiv1.PortNumber(port)
 	return gwapiv1.HTTPBackendRef{
 		BackendRef: gwapiv1.BackendRef{
 			BackendObjectReference: gwapiv1.BackendObjectReference{
 				Group: &group,
 				Kind:  &kind,
 				Name:  gwapiv1.ObjectName(name),
-				Port:  &p,
 			},
 		},
 	}
@@ -49,7 +47,7 @@ func TestBuildIngressRules_XBackendResolvedService(t *testing.T) {
 	route := makeRoute("ext", "apps",
 		[]gwapiv1.Hostname{hostname("proxy.example.com")},
 		[]gwapiv1.HTTPRouteRule{{
-			BackendRefs: []gwapiv1.HTTPBackendRef{xbackendHTTPRef("openai", 443)},
+			BackendRefs: []gwapiv1.HTTPBackendRef{xbackendHTTPRef("openai")},
 		}},
 	)
 
@@ -75,8 +73,8 @@ func TestBuildIngressRules_XBackendResolvedService(t *testing.T) {
 	if cap.got.RouteNamespace != "apps" || cap.got.RouteKind != "HTTPRoute" {
 		t.Errorf("resolver route identity: got %q/%q, want apps/HTTPRoute", cap.got.RouteNamespace, cap.got.RouteKind)
 	}
-	if cap.got.Port == nil || *cap.got.Port != 443 {
-		t.Errorf("resolver port: got %v, want 443", cap.got.Port)
+	if cap.got.Port != nil {
+		t.Errorf("resolver port: got %v, want nil", cap.got.Port)
 	}
 }
 
@@ -85,7 +83,7 @@ func TestBuildIngressRules_XBackendUnresolvable500(t *testing.T) {
 	route := makeRoute("ext", "default",
 		[]gwapiv1.Hostname{hostname("proxy.example.com")},
 		[]gwapiv1.HTTPRouteRule{{
-			BackendRefs: []gwapiv1.HTTPBackendRef{xbackendHTTPRef("missing", 443)},
+			BackendRefs: []gwapiv1.HTTPBackendRef{xbackendHTTPRef("missing")},
 		}},
 	)
 	rules := BuildIngressRules([]gwapiv1.HTTPRoute{route}, cap.resolve)

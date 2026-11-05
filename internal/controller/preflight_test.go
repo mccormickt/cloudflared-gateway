@@ -21,7 +21,7 @@ import (
 )
 
 func TestGatewayAPIChannelCheck(t *testing.T) {
-	const min = "v1.6.3"
+	const min = "v1.7.0"
 
 	tests := []struct {
 		name          string
@@ -70,22 +70,29 @@ func TestGatewayAPIChannelCheck(t *testing.T) {
 			wantWarnCount: 1,
 		},
 		{
-			name:      "earlier patch of the same minor -> ok",
+			name:      "later patch of the same minor -> ok",
 			channel:   "experimental",
-			version:   "v1.6.0",
+			version:   "v1.7.1",
 			requireXB: true,
 		},
 		{
 			name:      "release candidate of the same minor -> fatal",
 			channel:   "experimental",
-			version:   "v1.6.0-rc.1",
+			version:   "v1.7.0-rc.1",
 			requireXB: true,
 			wantErr:   true,
 		},
 		{
 			name:      "newer minor -> fatal for experimental API",
 			channel:   "experimental",
-			version:   "v1.7.0",
+			version:   "v1.8.0",
+			requireXB: true,
+			wantErr:   true,
+		},
+		{
+			name:      "v1.6 XBackend schema -> fatal",
+			channel:   "experimental",
+			version:   "v1.6.3",
 			requireXB: true,
 			wantErr:   true,
 		},
@@ -172,15 +179,15 @@ func TestPreflightCheckCRDs(t *testing.T) {
 		wantErr  string
 	}{
 		{name: "standard only without XBackend"},
-		{name: "standard plus standalone XBackend", enabled: true, xPresent: true, xVersion: "v1.6.1"},
+		{name: "standard plus standalone XBackend", enabled: true, xPresent: true, xVersion: "v1.7.0"},
 		{name: "enabled but missing XBackend", enabled: true, wantErr: "make install-xbackend-crd"},
 		{name: "missing TLSRoute v1", missing: "tlsroutes", wantErr: "\"tlsroutes\" is not served"},
 		{name: "missing TCPRoute v1", missing: "tcproutes", wantErr: "\"tcproutes\" is not served"},
 		{name: "missing ReferenceGrant v1", missing: "referencegrants", wantErr: "\"referencegrants\" is not served"},
 		{name: "missing BackendTLSPolicy v1", missing: "backendtlspolicies", wantErr: "\"backendtlspolicies\" is not served"},
-		{name: "wrong XBackend release despite current core", enabled: true, xPresent: true, xVersion: "v1.5.1", wantErr: "XBackend bundle v1.5.1"},
+		{name: "wrong XBackend release despite current core", enabled: true, xPresent: true, xVersion: "v1.6.3", wantErr: "XBackend bundle v1.6.3"},
 		{name: "unreadable stable metadata is a warning", denyMeta: true},
-		{name: "unreadable experimental metadata is fatal", enabled: true, xPresent: true, xVersion: "v1.6.3", denyMeta: true, wantErr: "grant get access"},
+		{name: "unreadable experimental metadata is fatal", enabled: true, xPresent: true, xVersion: "v1.7.0", denyMeta: true, wantErr: "grant get access"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			resources := []metav1.APIResource{}
@@ -197,7 +204,7 @@ func TestPreflightCheckCRDs(t *testing.T) {
 				{GroupVersion: "gateway.networking.k8s.io/v1", APIResources: resources},
 				{GroupVersion: xBackendGroup + "/v1alpha1", APIResources: xResources},
 			}}}
-			objects := []runtime.Object{bundleCRD(coreCRDName, "standard", "v1.6.3")}
+			objects := []runtime.Object{bundleCRD(coreCRDName, "standard", "v1.7.0")}
 			if tc.xPresent {
 				objects = append(objects, bundleCRD(xBackendCRDName, "experimental", tc.xVersion))
 			}
@@ -207,7 +214,7 @@ func TestPreflightCheckCRDs(t *testing.T) {
 					return true, nil, apierrors.NewForbidden(crdGVR.GroupResource(), action.(clienttesting.GetAction).GetName(), nil)
 				})
 			}
-			err := preflightCheckCRDs(context.Background(), dc, dyn, tc.enabled, "v1.6.3", logr.Discard())
+			err := preflightCheckCRDs(context.Background(), dc, dyn, tc.enabled, "v1.7.0", logr.Discard())
 			if tc.wantErr == "" {
 				if err != nil {
 					t.Fatal(err)

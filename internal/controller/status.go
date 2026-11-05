@@ -169,6 +169,8 @@ func resolvedRefsResultFor(reason string) ResolvedRefsResult {
 		return ResolvedRefsResult{Reason: string(gwapiv1.RouteReasonRefNotPermitted), Message: "Cross-namespace backend reference is not permitted by any ReferenceGrant"}
 	case reasonIncompatibleRouteKind:
 		return ResolvedRefsResult{Reason: "IncompatibleRouteKind", Message: "Referenced XBackend's protocol and TLS mode do not match the transport this route kind carries"}
+	case reasonInvalidBackendPort:
+		return ResolvedRefsResult{Reason: reasonInvalidBackendPort, Message: "Set XBackend.spec.port.number to a value from 1 through 65535 and omit backendRef.port on routes; migrate spec.port.port to spec.port.number when upgrading from v1.6"}
 	case reasonUnsupportedProtocol:
 		return ResolvedRefsResult{Reason: "UnsupportedProtocol", Message: "Referenced XBackend uses a protocol or TLS mode Cloudflare tunnels cannot serve"}
 	case reasonUnsupportedCACerts:

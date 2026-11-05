@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -21,7 +22,7 @@ func makeXBackend(ns, name, host string, port int32, proto *apisxv1alpha1.Backen
 		ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name},
 		Spec: apisxv1alpha1.BackendSpec{
 			Type:             apisxv1alpha1.BackendTypeExternalHostname,
-			Port:             apisxv1alpha1.BackendPort{Port: apisxv1alpha1.PortNumber(port)},
+			Port:             apisxv1alpha1.BackendPort{Number: apisxv1alpha1.PortNumber(port)},
 			ExternalHostname: &apisxv1alpha1.ExternalHostnameBackend{Hostname: gwapiv1.PreciseHostname(host)},
 			Protocol:         proto,
 			TLS:              tls,
@@ -32,13 +33,13 @@ func makeXBackend(ns, name, host string, port int32, proto *apisxv1alpha1.Backen
 func TestTranslateXBackend(t *testing.T) {
 	tlsServerOnly := &apisxv1alpha1.BackendTLS{
 		Mode:       apisxv1alpha1.BackendTLSModeServerOnly,
-		Validation: gwapiv1.BackendTLSPolicyValidation{Hostname: "verify.example.com"},
+		Validation: &gwapiv1.BackendTLSPolicyValidation{Hostname: "verify.example.com"},
 	}
 	tlsNone := &apisxv1alpha1.BackendTLS{Mode: apisxv1alpha1.BackendTLSModeNone}
 	tlsMTLS := &apisxv1alpha1.BackendTLS{Mode: apisxv1alpha1.BackendTLSModeClientAndServer}
 	tlsCustomCA := &apisxv1alpha1.BackendTLS{
 		Mode: apisxv1alpha1.BackendTLSModeServerOnly,
-		Validation: gwapiv1.BackendTLSPolicyValidation{
+		Validation: &gwapiv1.BackendTLSPolicyValidation{
 			Hostname:          "verify.example.com",
 			CACertificateRefs: []gwapiv1.LocalObjectReference{{Kind: "ConfigMap", Name: "private-ca"}},
 		},
@@ -166,7 +167,11 @@ func xbTarget(routeNS, routeKind, xbNS, name string) backendTarget {
 }
 
 func TestResolveXBackendRef_Reasons(t *testing.T) {
-	xb := makeXBackend("ext", "api", "api.example.com", 443, nil, &apisxv1alpha1.BackendTLS{Mode: apisxv1alpha1.BackendTLSModeServerOnly})
+	tls := &apisxv1alpha1.BackendTLS{
+		Mode:       apisxv1alpha1.BackendTLSModeServerOnly,
+		Validation: &gwapiv1.BackendTLSPolicyValidation{Hostname: "api.example.com"},
+	}
+	xb := makeXBackend("ext", "api", "api.example.com", 443, nil, tls)
 
 	t.Run("flag off -> XBackendDisabled", func(t *testing.T) {
 		r := &GatewayReconciler{ExperimentalBackends: false}
@@ -200,7 +205,7 @@ func TestResolveXBackendRef_Reasons(t *testing.T) {
 	t.Run("same-ns resolved", func(t *testing.T) {
 		r := &GatewayReconciler{ExperimentalBackends: true}
 		col := &xbBackends{
-			fetched:   map[xbKey]*apisxv1alpha1.XBackend{{namespace: "apps", name: "api"}: makeXBackend("apps", "api", "api.example.com", 443, nil, &apisxv1alpha1.BackendTLS{Mode: apisxv1alpha1.BackendTLSModeServerOnly})},
+			fetched:   map[xbKey]*apisxv1alpha1.XBackend{{namespace: "apps", name: "api"}: makeXBackend("apps", "api", "api.example.com", 443, nil, tls)},
 			permitted: map[permitKey]bool{},
 		}
 		rb, reason := r.resolveXBackendRef(xbTarget("apps", "HTTPRoute", "apps", "api"), col)
@@ -229,7 +234,10 @@ func TestResolveXBackendRef_Reasons(t *testing.T) {
 // the origin scheme has to match the transport the referencing route kind
 // carries, and an unset protocol defaults per route kind.
 func TestTranslateXBackend_RouteKindCompatibility(t *testing.T) {
-	tlsServerOnly := &apisxv1alpha1.BackendTLS{Mode: apisxv1alpha1.BackendTLSModeServerOnly}
+	tlsServerOnly := &apisxv1alpha1.BackendTLS{
+		Mode:       apisxv1alpha1.BackendTLSModeServerOnly,
+		Validation: &gwapiv1.BackendTLSPolicyValidation{Hostname: "api.example.com"},
+	}
 	tlsNone := &apisxv1alpha1.BackendTLS{Mode: apisxv1alpha1.BackendTLSModeNone}
 
 	tests := []struct {
@@ -428,7 +436,7 @@ func TestApplyBackendTLSPolicies_PreservesXBackendOrigin(t *testing.T) {
 	xb := makeXBackend("default", "secure", "secure.example.net", 8443, nil,
 		&apisxv1alpha1.BackendTLS{
 			Mode:       apisxv1alpha1.BackendTLSModeServerOnly,
-			Validation: gwapiv1.BackendTLSPolicyValidation{Hostname: "secure.example.net"},
+			Validation: &gwapiv1.BackendTLSPolicyValidation{Hostname: "secure.example.net"},
 		})
 
 	r := &GatewayReconciler{
@@ -459,6 +467,122 @@ func TestApplyBackendTLSPolicies_PreservesXBackendOrigin(t *testing.T) {
 	}
 	if rules[0].OriginRequest.OriginServerName == nil || *rules[0].OriginRequest.OriginServerName != "secure.example.net" {
 		t.Errorf("OriginServerName was dropped: %+v", rules[0].OriginRequest)
+	}
+}
+
+func TestXBackendRoutingConstraints(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		modify      func(*apisxv1alpha1.XBackend, *gwapiv1.BackendObjectReference)
+		storedJSON  string
+		wantService string
+		wantReason  string
+	}{
+		{name: "external hostname"},
+		{
+			name:       "stored v1.6 destination port",
+			storedJSON: `{"metadata":{"namespace":"apps","name":"external"},"spec":{"type":"ExternalHostname","externalHostname":{"hostname":"origin.example.com"},"port":{"port":443}}}`,
+			wantReason: "InvalidBackendPort",
+		},
+		{
+			name:       "negative destination port",
+			modify:     func(xb *apisxv1alpha1.XBackend, _ *gwapiv1.BackendObjectReference) { xb.Spec.Port.Number = -1 },
+			wantReason: "InvalidBackendPort",
+		},
+		{
+			name:       "destination port above maximum",
+			modify:     func(xb *apisxv1alpha1.XBackend, _ *gwapiv1.BackendObjectReference) { xb.Spec.Port.Number = 65536 },
+			wantReason: "InvalidBackendPort",
+		},
+		{
+			name:        "minimum destination port",
+			modify:      func(xb *apisxv1alpha1.XBackend, _ *gwapiv1.BackendObjectReference) { xb.Spec.Port.Number = 1 },
+			wantService: "https://origin.example.com:1",
+		},
+		{
+			name:        "maximum destination port",
+			modify:      func(xb *apisxv1alpha1.XBackend, _ *gwapiv1.BackendObjectReference) { xb.Spec.Port.Number = 65535 },
+			wantService: "https://origin.example.com:65535",
+		},
+		{
+			name: "reference port is prohibited",
+			modify: func(_ *apisxv1alpha1.XBackend, ref *gwapiv1.BackendObjectReference) {
+				ref.Port = ptr(gwapiv1.PortNumber(8443))
+			},
+			wantReason: "InvalidBackendPort",
+		},
+		{
+			name: "WSS is not supported",
+			modify: func(xb *apisxv1alpha1.XBackend, _ *gwapiv1.BackendObjectReference) {
+				xb.Spec.Protocol = protoPtr(apisxv1alpha1.BackendProtocolWSS)
+			},
+			wantReason: "UnsupportedProtocol",
+		},
+		{
+			name: "EndpointSelector is not supported",
+			modify: func(xb *apisxv1alpha1.XBackend, _ *gwapiv1.BackendObjectReference) {
+				xb.Spec.Type = apisxv1alpha1.BackendTypeEndpointSelector
+				xb.Spec.ExternalHostname = nil
+				xb.Spec.EndpointSelector = &apisxv1alpha1.EndpointSelectorBackend{
+					LabelSelector: apisxv1alpha1.LabelSelector{MatchLabels: map[gwapiv1.LabelKey]gwapiv1.LabelValue{"app": "web"}},
+				}
+			},
+			wantReason: "UnsupportedProtocol",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			xb := makeXBackend("apps", "external", "origin.example.com", 9443, nil, &apisxv1alpha1.BackendTLS{
+				Mode: apisxv1alpha1.BackendTLSModeServerOnly,
+				Validation: &gwapiv1.BackendTLSPolicyValidation{
+					Hostname: "verify.example.com", WellKnownCACertificates: ptr(gwapiv1.WellKnownCACertificatesSystem),
+				},
+			})
+			if tc.storedJSON != "" {
+				xb = &apisxv1alpha1.XBackend{}
+				if err := json.Unmarshal([]byte(tc.storedJSON), xb); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ref := gwapiv1.BackendObjectReference{Group: ptr(gwapiv1.Group(xBackendGroup)), Kind: ptr(gwapiv1.Kind(xBackendKind)), Name: "external"}
+			if tc.modify != nil {
+				tc.modify(xb, &ref)
+			}
+			route := gwapiv1.HTTPRoute{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "apps", Name: "external-route"},
+				Spec: gwapiv1.HTTPRouteSpec{
+					Hostnames: []gwapiv1.Hostname{"public.example.com"},
+					Rules: []gwapiv1.HTTPRouteRule{{BackendRefs: []gwapiv1.HTTPBackendRef{{
+						BackendRef: gwapiv1.BackendRef{BackendObjectReference: ref},
+					}}}},
+				},
+			}
+			r := &GatewayReconciler{ExperimentalBackends: true}
+			col := &xbBackends{fetched: map[xbKey]*apisxv1alpha1.XBackend{{namespace: "apps", name: "external"}: xb}}
+			status := r.routeResolvedRefs("apps", "HTTPRoute", httpRouteObjRefs(&route), col, nil)
+			wantService := "https://origin.example.com:9443"
+			if tc.wantService != "" {
+				wantService = tc.wantService
+			}
+			if tc.wantReason != "" {
+				wantService = "http_status:500"
+				if status.OK || status.Reason != tc.wantReason {
+					t.Fatalf("route status: %+v, want %s", status, tc.wantReason)
+				}
+			} else if !status.OK {
+				t.Fatalf("valid external backend rejected: %+v", status)
+			}
+			rules := cfclient.BuildIngressRules([]gwapiv1.HTTPRoute{route}, r.backendResolver(col, nil))
+			if len(rules) != 1 || rules[0].Service != wantService {
+				t.Fatalf("ingress: %+v, want %s", rules, wantService)
+			}
+			if tc.wantReason == "InvalidBackendPort" && ref.Port == nil {
+				_, reason := translateXBackend(xb, "")
+				condition := xbAcceptedCondition(xb.Generation, reason)
+				if condition.Status != metav1.ConditionFalse || condition.Reason != "InvalidBackendPort" || !strings.Contains(condition.Message, "spec.port.number") {
+					t.Fatalf("backend must report the required port migration: %+v", condition)
+				}
+			}
+		})
 	}
 }
 
@@ -509,7 +633,7 @@ func TestXBackendRejectsSubjectAltNames(t *testing.T) {
 		t.Run(string(san.Type), func(t *testing.T) {
 			xb := makeXBackend("apps", "api", "origin.example.com", 443, nil, &apisxv1alpha1.BackendTLS{
 				Mode: apisxv1alpha1.BackendTLSModeServerOnly,
-				Validation: gwapiv1.BackendTLSPolicyValidation{
+				Validation: &gwapiv1.BackendTLSPolicyValidation{
 					Hostname:                "sni.example.com",
 					WellKnownCACertificates: ptr(gwapiv1.WellKnownCACertificatesSystem),
 					SubjectAltNames:         []gwapiv1.SubjectAltName{san},

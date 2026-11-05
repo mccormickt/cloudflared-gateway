@@ -1191,11 +1191,11 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Name: "integ-openai", Namespace: "default"},
 			Spec: apisxv1alpha1.BackendSpec{
 				Type:             apisxv1alpha1.BackendTypeExternalHostname,
-				Port:             apisxv1alpha1.BackendPort{Port: 443},
+				Port:             apisxv1alpha1.BackendPort{Number: 443},
 				ExternalHostname: &apisxv1alpha1.ExternalHostnameBackend{Hostname: "api.example.com"},
 				TLS: &apisxv1alpha1.BackendTLS{
 					Mode: apisxv1alpha1.BackendTLSModeServerOnly,
-					Validation: gwapiv1.BackendTLSPolicyValidation{
+					Validation: &gwapiv1.BackendTLSPolicyValidation{
 						Hostname:                "api.example.com",
 						WellKnownCACertificates: &systemCA,
 					},
@@ -1209,7 +1209,6 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 
 		xbGroup := gwapiv1.Group(apisxv1alpha1.GroupName)
 		xbKind := gwapiv1.Kind("XBackend")
-		xbPort := gwapiv1.PortNumber(443)
 		route := makeHTTPRoute("integ-route-xbackend", "default", gw.Name)
 		route.Spec.Hostnames = []gwapiv1.Hostname{"proxy.example.com"}
 		route.Spec.Rules = []gwapiv1.HTTPRouteRule{{
@@ -1219,7 +1218,6 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 						Group: &xbGroup,
 						Kind:  &xbKind,
 						Name:  "integ-openai",
-						Port:  &xbPort,
 					},
 				},
 			}},
@@ -1316,11 +1314,11 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: "integ-xns-backend", Namespace: ns},
 				Spec: apisxv1alpha1.BackendSpec{
 					Type:             apisxv1alpha1.BackendTypeExternalHostname,
-					Port:             apisxv1alpha1.BackendPort{Port: 443},
+					Port:             apisxv1alpha1.BackendPort{Number: 443},
 					ExternalHostname: &apisxv1alpha1.ExternalHostnameBackend{Hostname: "api.example.com"},
 					TLS: &apisxv1alpha1.BackendTLS{
 						Mode: apisxv1alpha1.BackendTLSModeServerOnly,
-						Validation: gwapiv1.BackendTLSPolicyValidation{
+						Validation: &gwapiv1.BackendTLSPolicyValidation{
 							Hostname:                "api.example.com",
 							WellKnownCACertificates: &systemCA,
 						},
@@ -1331,7 +1329,6 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 
 		xbGroup := gwapiv1.Group(apisxv1alpha1.GroupName)
 		xbKind := gwapiv1.Kind("XBackend")
-		xbPort := gwapiv1.PortNumber(443)
 		makeXNSRoute := func(name, hostname, backendNS string) *gwapiv1.HTTPRoute {
 			ns := gwapiv1.Namespace(backendNS)
 			route := makeHTTPRoute(name, "default", gw.Name)
@@ -1344,7 +1341,6 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 							Kind:      &xbKind,
 							Namespace: &ns,
 							Name:      "integ-xns-backend",
-							Port:      &xbPort,
 						},
 					},
 				}},

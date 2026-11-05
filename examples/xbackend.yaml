@@ -3,7 +3,9 @@
 # ExternalName Service. Routing to one requires the controller to run with
 # --enable-experimental-backends (Helm: experimental.backends.enabled=true) and
 # the XBackend CRD installed (make install-xbackend-crd). Stable Gateway API CRDs
-# can remain on the standard channel. Gateway API v1.6.3 has no stable XBackend.
+# can remain on the standard channel. Gateway API v1.7.0 has no stable XBackend.
+# Only ExternalHostname is supported; EndpointSelector and session persistence
+# are unsupported and rejected.
 #
 # Here an HTTPRoute proxies traffic to https://api.openai.com:443 through the
 # Cloudflare tunnel, with origin certificate verification (TLS ServerOnly).
@@ -15,14 +17,16 @@ metadata:
 spec:
   type: ExternalHostname
   port:
-    port: 443
+    number: 443
   externalHostname:
     hostname: api.openai.com
   # protocol defaults to HTTP; TLS mode ServerOnly makes the tunnel connect over
-  # HTTPS and verify the origin certificate. Supported: TCP, HTTP, HTTP2, H2C,
-  # HTTP11 (MCP and mutual-TLS ClientAndServer are not supported).
+  # HTTPS and verify the origin certificate. Supported: HTTP, HTTP11, HTTP2/GRPC
+  # with ServerOnly TLS, and plain TCP. H2C, MCP, WSS (new in v1.7), and
+  # mutual-TLS ClientAndServer are unsupported.
   tls:
     mode: ServerOnly
+    # Required by the CRD for ServerOnly, even though optional in the Go type.
     validation:
       hostname: api.openai.com
       # Verify the origin against the well-known system CA bundle. (Custom
@@ -49,3 +53,4 @@ spec:
         - group: gateway.networking.x-k8s.io
           kind: XBackend
           name: openai-api
+          # Do not set port here; XBackend uses spec.port.number instead.

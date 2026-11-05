@@ -75,7 +75,7 @@ dns:
   enabled: false
 
 # Install the bundled Gateway API experimental CRDs and safe-upgrade policies
-# using the Helm/GitOps caller's permissions. Requires Kubernetes 1.30+.
+# using the Helm/GitOps caller's permissions. Requires Kubernetes 1.32+.
 # Leave disabled when a cluster administrator already manages Gateway API.
 # Helm does not upgrade or delete CRDs; upgrade them separately before the controller.
 gatewayAPI:
