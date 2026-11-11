@@ -1,6 +1,6 @@
 module github.com/mccormickt/cloudflared-gateway
 
-go 1.27.0
+go 1.27.4
 
 require (
 	github.com/cloudflare/cloudflare-go/v7 v7.8.0
