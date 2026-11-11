@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
@@ -16,10 +15,8 @@ import (
 
 func makeRoute(name, namespace string, hostnames []gwapiv1.Hostname, rules []gwapiv1.HTTPRouteRule) gwapiv1.HTTPRoute {
 	return gwapiv1.HTTPRoute{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-		},
+		Name:      name,
+		Namespace: namespace,
 		Spec: gwapiv1.HTTPRouteSpec{
 			Hostnames: hostnames,
 			Rules:     rules,
@@ -30,12 +27,8 @@ func makeRoute(name, namespace string, hostnames []gwapiv1.Hostname, rules []gwa
 func makeBackendRef(name string, port int) gwapiv1.HTTPBackendRef {
 	p := gwapiv1.PortNumber(port)
 	return gwapiv1.HTTPBackendRef{
-		BackendRef: gwapiv1.BackendRef{
-			BackendObjectReference: gwapiv1.BackendObjectReference{
-				Name: gwapiv1.ObjectName(name),
-				Port: &p,
-			},
-		},
+		Name: gwapiv1.ObjectName(name),
+		Port: &p,
 	}
 }
 
@@ -484,18 +477,14 @@ func TestBuildIngressRules_TimeoutWithFilter(t *testing.T) {
 func TestBuildTLSIngressRules_WithHostnames(t *testing.T) {
 	p := gwapiv1.PortNumber(8443)
 	route := gwapiv1.TLSRoute{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "tls-route",
-			Namespace: "default",
-		},
+		Name:      "tls-route",
+		Namespace: "default",
 		Spec: gwapiv1.TLSRouteSpec{
 			Hostnames: []gwapiv1.Hostname{hostname("secure.example.com")},
 			Rules: []gwapiv1.TLSRouteRule{{
 				BackendRefs: []gwapiv1.BackendRef{{
-					BackendObjectReference: gwapiv1.BackendObjectReference{
-						Name: "tls-svc",
-						Port: &p,
-					},
+					Name: "tls-svc",
+					Port: &p,
 				}},
 			}},
 		},
@@ -519,10 +508,8 @@ func TestBuildTLSIngressRules_WithHostnames(t *testing.T) {
 
 func TestBuildTLSIngressRules_DefaultPort443(t *testing.T) {
 	route := gwapiv1.TLSRoute{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "tls-route",
-			Namespace: "default",
-		},
+		Name:      "tls-route",
+		Namespace: "default",
 		Spec: gwapiv1.TLSRouteSpec{
 			Hostnames: []gwapiv1.Hostname{hostname("secure.example.com")},
 			Rules: []gwapiv1.TLSRouteRule{{
@@ -548,10 +535,8 @@ func TestBuildTLSIngressRules_DefaultPort443(t *testing.T) {
 
 func TestBuildTLSIngressRules_NoBackendRefProduces503(t *testing.T) {
 	route := gwapiv1.TLSRoute{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "tls-empty",
-			Namespace: "default",
-		},
+		Name:      "tls-empty",
+		Namespace: "default",
 		Spec: gwapiv1.TLSRouteSpec{
 			Hostnames: []gwapiv1.Hostname{hostname("example.com")},
 			Rules:     []gwapiv1.TLSRouteRule{{
@@ -577,17 +562,13 @@ func TestBuildTLSIngressRules_NoBackendRefProduces503(t *testing.T) {
 func TestBuildTCPIngressRules_BasicRoute(t *testing.T) {
 	p := gwapiv1.PortNumber(5432)
 	route := gwapiv1.TCPRoute{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "tcp-route",
-			Namespace: "default",
-		},
+		Name:      "tcp-route",
+		Namespace: "default",
 		Spec: gwapiv1.TCPRouteSpec{
 			Rules: []gwapiv1.TCPRouteRule{{
 				BackendRefs: []gwapiv1.BackendRef{{
-					BackendObjectReference: gwapiv1.BackendObjectReference{
-						Name: "db-svc",
-						Port: &p,
-					},
+					Name: "db-svc",
+					Port: &p,
 				}},
 			}},
 		},
@@ -611,10 +592,8 @@ func TestBuildTCPIngressRules_BasicRoute(t *testing.T) {
 
 func TestBuildTCPIngressRules_NoBackendRef(t *testing.T) {
 	route := gwapiv1.TCPRoute{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "tcp-empty",
-			Namespace: "default",
-		},
+		Name:      "tcp-empty",
+		Namespace: "default",
 		Spec: gwapiv1.TCPRouteSpec{
 			Rules: []gwapiv1.TCPRouteRule{{
 				// No BackendRefs
@@ -638,10 +617,8 @@ func TestBuildTCPIngressRules_NoBackendRef(t *testing.T) {
 
 func makeGRPCRoute(name, namespace string, hostnames []gwapiv1.Hostname, rules []gwapiv1.GRPCRouteRule) gwapiv1.GRPCRoute {
 	return gwapiv1.GRPCRoute{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-		},
+		Name:      name,
+		Namespace: namespace,
 		Spec: gwapiv1.GRPCRouteSpec{
 			Hostnames: hostnames,
 			Rules:     rules,
@@ -652,12 +629,8 @@ func makeGRPCRoute(name, namespace string, hostnames []gwapiv1.Hostname, rules [
 func makeGRPCBackendRef(name string, port int) gwapiv1.GRPCBackendRef {
 	p := gwapiv1.PortNumber(port)
 	return gwapiv1.GRPCBackendRef{
-		BackendRef: gwapiv1.BackendRef{
-			BackendObjectReference: gwapiv1.BackendObjectReference{
-				Name: gwapiv1.ObjectName(name),
-				Port: &p,
-			},
-		},
+		Name: gwapiv1.ObjectName(name),
+		Port: &p,
 	}
 }
 
@@ -671,15 +644,13 @@ func grpcMethodMatch(matchType gwapiv1.GRPCMethodMatchType, service, method *str
 	}
 }
 
-func strPtr(s string) *string { return &s }
-
 func TestBuildGRPCIngressRules_ServiceAndMethod(t *testing.T) {
 	route := makeGRPCRoute("grpc", "default",
 		[]gwapiv1.Hostname{hostname("grpc.example.com")},
 		[]gwapiv1.GRPCRouteRule{{
 			BackendRefs: []gwapiv1.GRPCBackendRef{makeGRPCBackendRef("grpc-svc", 50051)},
 			Matches: []gwapiv1.GRPCRouteMatch{
-				grpcMethodMatch(gwapiv1.GRPCMethodMatchExact, strPtr("mypackage.MyService"), strPtr("GetItem")),
+				grpcMethodMatch(gwapiv1.GRPCMethodMatchExact, new("mypackage.MyService"), new("GetItem")),
 			},
 		}},
 	)
@@ -707,7 +678,7 @@ func TestBuildGRPCIngressRules_ServiceOnly(t *testing.T) {
 		[]gwapiv1.GRPCRouteRule{{
 			BackendRefs: []gwapiv1.GRPCBackendRef{makeGRPCBackendRef("grpc-svc", 50051)},
 			Matches: []gwapiv1.GRPCRouteMatch{
-				grpcMethodMatch(gwapiv1.GRPCMethodMatchExact, strPtr("mypackage.MyService"), nil),
+				grpcMethodMatch(gwapiv1.GRPCMethodMatchExact, new("mypackage.MyService"), nil),
 			},
 		}},
 	)
@@ -730,7 +701,7 @@ func TestBuildGRPCIngressRules_RegexMatch(t *testing.T) {
 		[]gwapiv1.GRPCRouteRule{{
 			BackendRefs: []gwapiv1.GRPCBackendRef{makeGRPCBackendRef("grpc-svc", 50051)},
 			Matches: []gwapiv1.GRPCRouteMatch{
-				grpcMethodMatch(gwapiv1.GRPCMethodMatchRegularExpression, strPtr("mypackage\\.My.*"), strPtr("Get.*")),
+				grpcMethodMatch(gwapiv1.GRPCMethodMatchRegularExpression, new("mypackage\\.My.*"), new("Get.*")),
 			},
 		}},
 	)

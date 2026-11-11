@@ -25,7 +25,7 @@ func TestNormalizeDNSName(t *testing.T) {
 
 func TestChunkDNSChanges(t *testing.T) {
 	var changes DNSChanges
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		changes.Creates = append(changes.Creates, DNSRecord{Name: fmt.Sprintf("h%d.example.com", i)})
 	}
 

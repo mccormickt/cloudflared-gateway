@@ -210,10 +210,8 @@ func routeToGateways(_ context.Context, obj client.Object) []reconcile.Request {
 		}
 
 		requests = append(requests, reconcile.Request{
-			NamespacedName: client.ObjectKey{
-				Name:      string(ref.Name),
-				Namespace: ns,
-			},
+			Name:      string(ref.Name),
+			Namespace: ns,
 		})
 	}
 	return requests

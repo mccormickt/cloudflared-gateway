@@ -61,8 +61,7 @@ func FinalizerError(err error) *ControllerError {
 // IsPermanent returns true if the error should not be retried.
 // Only configuration errors are permanent.
 func IsPermanent(err error) bool {
-	var ce *ControllerError
-	if errors.As(err, &ce) {
+	if ce, ok := errors.AsType[*ControllerError](err); ok {
 		return ce.category == errConfig
 	}
 	return false

@@ -15,11 +15,9 @@ import (
 	apisxv1alpha1 "sigs.k8s.io/gateway-api/apisx/v1alpha1"
 )
 
-func protoPtr(p apisxv1alpha1.BackendProtocol) *apisxv1alpha1.BackendProtocol { return &p }
-
 func makeXBackend(ns, name, host string, port int32, proto *apisxv1alpha1.BackendProtocol, tls *apisxv1alpha1.BackendTLS) *apisxv1alpha1.XBackend {
 	return &apisxv1alpha1.XBackend{
-		ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name},
+		Namespace: ns, Name: name,
 		Spec: apisxv1alpha1.BackendSpec{
 			Type:             apisxv1alpha1.BackendTypeExternalHostname,
 			Port:             apisxv1alpha1.BackendPort{Number: apisxv1alpha1.PortNumber(port)},
@@ -71,51 +69,51 @@ func TestTranslateXBackend(t *testing.T) {
 		},
 		{
 			name:        "http2 sets http2origin",
-			xb:          makeXBackend("ns", "a", "api.example.com", 443, protoPtr(apisxv1alpha1.BackendProtocolHTTP2), tlsServerOnly),
+			xb:          makeXBackend("ns", "a", "api.example.com", 443, new(apisxv1alpha1.BackendProtocolHTTP2), tlsServerOnly),
 			wantService: "https://api.example.com:443",
 			wantHTTP2:   true,
 			wantSNI:     "verify.example.com",
 		},
 		{
 			name:        "grpc sets http2origin",
-			xb:          makeXBackend("ns", "a", "grpc.example.com", 443, protoPtr(apisxv1alpha1.BackendProtocolGRPC), tlsServerOnly),
+			xb:          makeXBackend("ns", "a", "grpc.example.com", 443, new(apisxv1alpha1.BackendProtocolGRPC), tlsServerOnly),
 			wantService: "https://grpc.example.com:443",
 			wantHTTP2:   true,
 			wantSNI:     "verify.example.com",
 		},
 		{
 			name:        "tcp protocol",
-			xb:          makeXBackend("ns", "a", "tcp.example.com", 5432, protoPtr(apisxv1alpha1.BackendProtocolTCP), nil),
+			xb:          makeXBackend("ns", "a", "tcp.example.com", 5432, new(apisxv1alpha1.BackendProtocolTCP), nil),
 			wantService: "tcp://tcp.example.com:5432",
 		},
 		{
 			name:        "tcp with tls none stays tcp",
-			xb:          makeXBackend("ns", "a", "tcp.example.com", 5432, protoPtr(apisxv1alpha1.BackendProtocolTCP), tlsNone),
+			xb:          makeXBackend("ns", "a", "tcp.example.com", 5432, new(apisxv1alpha1.BackendProtocolTCP), tlsNone),
 			wantService: "tcp://tcp.example.com:5432",
 		},
 		{
 			name:       "tcp with server-only tls unsupported",
-			xb:         makeXBackend("ns", "a", "tcp.example.com", 5432, protoPtr(apisxv1alpha1.BackendProtocolTCP), tlsServerOnly),
+			xb:         makeXBackend("ns", "a", "tcp.example.com", 5432, new(apisxv1alpha1.BackendProtocolTCP), tlsServerOnly),
 			wantReason: reasonUnsupportedProtocol,
 		},
 		{
 			name:       "mcp unsupported",
-			xb:         makeXBackend("ns", "a", "api.example.com", 443, protoPtr(apisxv1alpha1.BackendProtocolMCP), nil),
+			xb:         makeXBackend("ns", "a", "api.example.com", 443, new(apisxv1alpha1.BackendProtocolMCP), nil),
 			wantReason: reasonUnsupportedProtocol,
 		},
 		{
 			name:       "h2c unsupported",
-			xb:         makeXBackend("ns", "a", "api.example.com", 80, protoPtr(apisxv1alpha1.BackendProtocolH2C), nil),
+			xb:         makeXBackend("ns", "a", "api.example.com", 80, new(apisxv1alpha1.BackendProtocolH2C), nil),
 			wantReason: reasonUnsupportedProtocol,
 		},
 		{
 			name:       "cleartext http2 unsupported",
-			xb:         makeXBackend("ns", "a", "api.example.com", 80, protoPtr(apisxv1alpha1.BackendProtocolHTTP2), nil),
+			xb:         makeXBackend("ns", "a", "api.example.com", 80, new(apisxv1alpha1.BackendProtocolHTTP2), nil),
 			wantReason: reasonUnsupportedProtocol,
 		},
 		{
 			name:       "cleartext grpc unsupported",
-			xb:         makeXBackend("ns", "a", "api.example.com", 80, protoPtr(apisxv1alpha1.BackendProtocolGRPC), tlsNone),
+			xb:         makeXBackend("ns", "a", "api.example.com", 80, new(apisxv1alpha1.BackendProtocolGRPC), tlsNone),
 			wantReason: reasonUnsupportedProtocol,
 		},
 		{
@@ -253,11 +251,11 @@ func TestTranslateXBackend_RouteKindCompatibility(t *testing.T) {
 			wantService: "tcp://api.example.com:443",
 		},
 		{
-			name: "TCPRoute with explicit TCP", routeKind: "TCPRoute", proto: protoPtr(apisxv1alpha1.BackendProtocolTCP),
+			name: "TCPRoute with explicit TCP", routeKind: "TCPRoute", proto: new(apisxv1alpha1.BackendProtocolTCP),
 			wantService: "tcp://api.example.com:443",
 		},
 		{
-			name: "TCPRoute with HTTP protocol is incompatible", routeKind: "TCPRoute", proto: protoPtr(apisxv1alpha1.BackendProtocolHTTP),
+			name: "TCPRoute with HTTP protocol is incompatible", routeKind: "TCPRoute", proto: new(apisxv1alpha1.BackendProtocolHTTP),
 			wantReason: reasonIncompatibleRouteKind,
 		},
 		{
@@ -269,7 +267,7 @@ func TestTranslateXBackend_RouteKindCompatibility(t *testing.T) {
 			wantService: "https://api.example.com:443",
 		},
 		{
-			name: "TLSRoute over plain TCP passes through", routeKind: "TLSRoute", proto: protoPtr(apisxv1alpha1.BackendProtocolTCP),
+			name: "TLSRoute over plain TCP passes through", routeKind: "TLSRoute", proto: new(apisxv1alpha1.BackendProtocolTCP),
 			wantService: "tcp://api.example.com:443",
 		},
 		{
@@ -281,15 +279,15 @@ func TestTranslateXBackend_RouteKindCompatibility(t *testing.T) {
 			wantService: "http://api.example.com:443",
 		},
 		{
-			name: "HTTPRoute with TCP is incompatible", routeKind: "HTTPRoute", proto: protoPtr(apisxv1alpha1.BackendProtocolTCP),
+			name: "HTTPRoute with TCP is incompatible", routeKind: "HTTPRoute", proto: new(apisxv1alpha1.BackendProtocolTCP),
 			wantReason: reasonIncompatibleRouteKind,
 		},
 		{
-			name: "GRPCRoute with TCP is incompatible", routeKind: "GRPCRoute", proto: protoPtr(apisxv1alpha1.BackendProtocolTCP), tls: tlsNone,
+			name: "GRPCRoute with TCP is incompatible", routeKind: "GRPCRoute", proto: new(apisxv1alpha1.BackendProtocolTCP), tls: tlsNone,
 			wantReason: reasonIncompatibleRouteKind,
 		},
 		{
-			name: "GRPCRoute with HTTP2 and TLS stays https", routeKind: "GRPCRoute", proto: protoPtr(apisxv1alpha1.BackendProtocolHTTP2), tls: tlsServerOnly,
+			name: "GRPCRoute with HTTP2 and TLS stays https", routeKind: "GRPCRoute", proto: new(apisxv1alpha1.BackendProtocolHTTP2), tls: tlsServerOnly,
 			wantService: "https://api.example.com:443",
 		},
 	}
@@ -423,14 +421,13 @@ func TestApplyBackendTLSPolicies_PreservesXBackendOrigin(t *testing.T) {
 	group := gwapiv1.Group(xBackendGroup)
 	kind := gwapiv1.Kind(xBackendKind)
 
-	xbRoute := gwapiv1.TLSRoute{}
-	xbRoute.Name = "tls-ext"
-	xbRoute.Namespace = "default"
+	xbRoute := gwapiv1.TLSRoute{
+		Name:      "tls-ext",
+		Namespace: "default"}
 	xbRoute.Spec.Hostnames = []gwapiv1.Hostname{"secure.example.net"}
 	xbRoute.Spec.Rules = []gwapiv1.TLSRouteRule{{
-		BackendRefs: []gwapiv1.BackendRef{{BackendObjectReference: gwapiv1.BackendObjectReference{
-			Group: &group, Kind: &kind, Name: "secure",
-		}}},
+		BackendRefs: []gwapiv1.BackendRef{{
+			Group: &group, Kind: &kind, Name: "secure"}},
 	}}
 
 	xb := makeXBackend("default", "secure", "secure.example.net", 8443, nil,
@@ -507,14 +504,14 @@ func TestXBackendRoutingConstraints(t *testing.T) {
 		{
 			name: "reference port is prohibited",
 			modify: func(_ *apisxv1alpha1.XBackend, ref *gwapiv1.BackendObjectReference) {
-				ref.Port = ptr(gwapiv1.PortNumber(8443))
+				ref.Port = new(gwapiv1.PortNumber(8443))
 			},
 			wantReason: "InvalidBackendPort",
 		},
 		{
 			name: "WSS is not supported",
 			modify: func(xb *apisxv1alpha1.XBackend, _ *gwapiv1.BackendObjectReference) {
-				xb.Spec.Protocol = protoPtr(apisxv1alpha1.BackendProtocolWSS)
+				xb.Spec.Protocol = new(apisxv1alpha1.BackendProtocolWSS)
 			},
 			wantReason: "UnsupportedProtocol",
 		},
@@ -524,7 +521,7 @@ func TestXBackendRoutingConstraints(t *testing.T) {
 				xb.Spec.Type = apisxv1alpha1.BackendTypeEndpointSelector
 				xb.Spec.ExternalHostname = nil
 				xb.Spec.EndpointSelector = &apisxv1alpha1.EndpointSelectorBackend{
-					LabelSelector: apisxv1alpha1.LabelSelector{MatchLabels: map[gwapiv1.LabelKey]gwapiv1.LabelValue{"app": "web"}},
+					MatchLabels: map[gwapiv1.LabelKey]gwapiv1.LabelValue{"app": "web"},
 				}
 			},
 			wantReason: "UnsupportedProtocol",
@@ -534,7 +531,7 @@ func TestXBackendRoutingConstraints(t *testing.T) {
 			xb := makeXBackend("apps", "external", "origin.example.com", 9443, nil, &apisxv1alpha1.BackendTLS{
 				Mode: apisxv1alpha1.BackendTLSModeServerOnly,
 				Validation: &gwapiv1.BackendTLSPolicyValidation{
-					Hostname: "verify.example.com", WellKnownCACertificates: ptr(gwapiv1.WellKnownCACertificatesSystem),
+					Hostname: "verify.example.com", WellKnownCACertificates: new(gwapiv1.WellKnownCACertificatesSystem),
 				},
 			})
 			if tc.storedJSON != "" {
@@ -543,16 +540,16 @@ func TestXBackendRoutingConstraints(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			ref := gwapiv1.BackendObjectReference{Group: ptr(gwapiv1.Group(xBackendGroup)), Kind: ptr(gwapiv1.Kind(xBackendKind)), Name: "external"}
+			ref := gwapiv1.BackendObjectReference{Group: new(gwapiv1.Group(xBackendGroup)), Kind: new(gwapiv1.Kind(xBackendKind)), Name: "external"}
 			if tc.modify != nil {
 				tc.modify(xb, &ref)
 			}
 			route := gwapiv1.HTTPRoute{
-				ObjectMeta: metav1.ObjectMeta{Namespace: "apps", Name: "external-route"},
+				Namespace: "apps", Name: "external-route",
 				Spec: gwapiv1.HTTPRouteSpec{
 					Hostnames: []gwapiv1.Hostname{"public.example.com"},
 					Rules: []gwapiv1.HTTPRouteRule{{BackendRefs: []gwapiv1.HTTPBackendRef{{
-						BackendRef: gwapiv1.BackendRef{BackendObjectReference: ref},
+						BackendObjectReference: ref,
 					}}}},
 				},
 			}
@@ -635,13 +632,13 @@ func TestXBackendRejectsSubjectAltNames(t *testing.T) {
 				Mode: apisxv1alpha1.BackendTLSModeServerOnly,
 				Validation: &gwapiv1.BackendTLSPolicyValidation{
 					Hostname:                "sni.example.com",
-					WellKnownCACertificates: ptr(gwapiv1.WellKnownCACertificatesSystem),
+					WellKnownCACertificates: new(gwapiv1.WellKnownCACertificatesSystem),
 					SubjectAltNames:         []gwapiv1.SubjectAltName{san},
 				},
 			})
 			r := &GatewayReconciler{ExperimentalBackends: true}
 			col := &xbBackends{fetched: map[xbKey]*apisxv1alpha1.XBackend{{namespace: "apps", name: "api"}: xb}}
-			refs := []gwapiv1.BackendObjectReference{{Group: ptr(gwapiv1.Group(xBackendGroup)), Kind: ptr(gwapiv1.Kind(xBackendKind)), Name: "api"}}
+			refs := []gwapiv1.BackendObjectReference{{Group: new(gwapiv1.Group(xBackendGroup)), Kind: new(gwapiv1.Kind(xBackendKind)), Name: "api"}}
 			routeResult := r.routeResolvedRefs("apps", "HTTPRoute", refs, col, nil)
 			if routeResult.OK || routeResult.Reason != "UnsupportedTLSValidation" || !strings.Contains(routeResult.Message, "subjectAltNames") {
 				t.Fatalf("route must reject custom SAN validation: %+v", routeResult)

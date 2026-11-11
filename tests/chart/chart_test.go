@@ -30,7 +30,7 @@ func TestGatewayAPIBundle(t *testing.T) {
 			}
 			roles := map[string]rbacv1.ClusterRole{}
 			found := map[string]bool{}
-			for _, doc := range bytes.Split(out, []byte("\n---")) {
+			for doc := range bytes.SplitSeq(out, []byte("\n---")) {
 				var resource unstructured.Unstructured
 				if err := yaml.Unmarshal(doc, &resource.Object); err != nil {
 					t.Fatal(err)

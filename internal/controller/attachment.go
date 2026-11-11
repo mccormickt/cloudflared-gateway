@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"slices"
 	"strings"
 
 	v1 "k8s.io/api/core/v1"
@@ -267,10 +268,5 @@ func matchNamespaceSelector(ctx context.Context, c client.Client, namespace stri
 }
 
 func containsString(slice []string, s string) bool {
-	for _, v := range slice {
-		if v == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(slice, s)
 }

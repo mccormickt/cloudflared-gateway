@@ -335,7 +335,7 @@ func TestReconcile_ManageDNSCreatesRecord(t *testing.T) {
 	}
 
 	if _, err := r.Reconcile(context.Background(), reconcile.Request{
-		NamespacedName: types.NamespacedName{Name: "test-gw", Namespace: "default"},
+		Name: "test-gw", Namespace: "default",
 	}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -381,7 +381,7 @@ func TestReconcile_DNSFailureMarksProgrammedFalse(t *testing.T) {
 
 	// DNS failure is retriable, so Reconcile returns an error...
 	if _, err := r.Reconcile(context.Background(), reconcile.Request{
-		NamespacedName: types.NamespacedName{Name: "test-gw", Namespace: "default"},
+		Name: "test-gw", Namespace: "default",
 	}); err == nil {
 		t.Fatal("expected a retriable error when DNS apply fails")
 	}
@@ -452,7 +452,7 @@ func TestReconcile_DNSUsesSelectedListener(t *testing.T) {
 				WithObjects(gw, gc, route).WithStatusSubresource(gw, gc, route).Build()
 			mock := newMockClient().withZones(cfclient.Zone{ID: "zone", Name: "example.com"})
 			r := &GatewayReconciler{Client: c, CloudflareClient: mock, ControllerName: ControllerName, ManageDNS: true}
-			if _, err := r.Reconcile(context.Background(), reconcile.Request{NamespacedName: types.NamespacedName{Name: "gw", Namespace: "default"}}); err != nil {
+			if _, err := r.Reconcile(context.Background(), reconcile.Request{Name: "gw", Namespace: "default"}); err != nil {
 				t.Fatal(err)
 			}
 			records := mock.dnsRecordsFor("zone")

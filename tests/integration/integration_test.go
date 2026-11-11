@@ -298,7 +298,7 @@ func startManager(t *testing.T, mockCF cfclient.APIClient) {
 
 func makeGatewayClass(name string) *gwapiv1.GatewayClass {
 	return &gwapiv1.GatewayClass{
-		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Name: name,
 		Spec: gwapiv1.GatewayClassSpec{
 			ControllerName: gwapiv1.GatewayController(controller.ControllerName),
 		},
@@ -308,10 +308,8 @@ func makeGatewayClass(name string) *gwapiv1.GatewayClass {
 func makeGateway(name, namespace, className string) *gwapiv1.Gateway {
 	from := gwapiv1.NamespacesFromSame
 	return &gwapiv1.Gateway{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-		},
+		Name:      name,
+		Namespace: namespace,
 		Spec: gwapiv1.GatewaySpec{
 			GatewayClassName: gwapiv1.ObjectName(className),
 			Listeners: []gwapiv1.Listener{{
@@ -350,10 +348,8 @@ func makeHTTPRoute(name, namespace, gwName string) *gwapiv1.HTTPRoute {
 	port := gwapiv1.PortNumber(80)
 
 	return &gwapiv1.HTTPRoute{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-		},
+		Name:      name,
+		Namespace: namespace,
 		Spec: gwapiv1.HTTPRouteSpec{
 			CommonRouteSpec: gwapiv1.CommonRouteSpec{
 				ParentRefs: []gwapiv1.ParentReference{{
@@ -365,12 +361,8 @@ func makeHTTPRoute(name, namespace, gwName string) *gwapiv1.HTTPRoute {
 			Hostnames: []gwapiv1.Hostname{"test.example.com"},
 			Rules: []gwapiv1.HTTPRouteRule{{
 				BackendRefs: []gwapiv1.HTTPBackendRef{{
-					BackendRef: gwapiv1.BackendRef{
-						BackendObjectReference: gwapiv1.BackendObjectReference{
-							Name: "web-svc",
-							Port: &port,
-						},
-					},
+					Name: "web-svc",
+					Port: &port,
 				}},
 			}},
 		},
@@ -465,17 +457,15 @@ func TestIntegration_HTTPRouteAttachment(t *testing.T) {
 func TestIntegration_ReferenceGrant(t *testing.T) {
 	ctx := context.Background()
 
-	ns := &v1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "refgrant-backend"}}
+	ns := &v1.Namespace{Name: "refgrant-backend"}
 	if err := k8sClient.Create(ctx, ns); err != nil {
 		t.Fatalf("failed to create namespace: %v", err)
 	}
 	t.Cleanup(func() { k8sClient.Delete(ctx, ns) })
 
 	grant := &gwapiv1.ReferenceGrant{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "allow-frontend-routes",
-			Namespace: "refgrant-backend",
-		},
+		Name:      "allow-frontend-routes",
+		Namespace: "refgrant-backend",
 		Spec: gwapiv1.ReferenceGrantSpec{
 			From: []gwapiv1.ReferenceGrantFrom{{
 				Group:     "gateway.networking.k8s.io",
@@ -514,10 +504,8 @@ func TestIntegration_NamespaceSelectorAttachment(t *testing.T) {
 	ctx := context.Background()
 
 	ns := &v1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:   "team-alpha",
-			Labels: map[string]string{"team": "alpha", "env": "staging"},
-		},
+		Name:   "team-alpha",
+		Labels: map[string]string{"team": "alpha", "env": "staging"},
 	}
 	if err := k8sClient.Create(ctx, ns); err != nil {
 		t.Fatalf("failed to create namespace: %v", err)
@@ -526,7 +514,7 @@ func TestIntegration_NamespaceSelectorAttachment(t *testing.T) {
 
 	from := gwapiv1.NamespacesFromSelector
 	gw := &gwapiv1.Gateway{
-		ObjectMeta: metav1.ObjectMeta{Name: "selector-test-gw", Namespace: "default"},
+		Name: "selector-test-gw", Namespace: "default",
 		Spec: gwapiv1.GatewaySpec{
 			GatewayClassName: "integration-test-class",
 			Listeners: []gwapiv1.Listener{{
@@ -554,10 +542,8 @@ func TestIntegration_NamespaceSelectorAttachment(t *testing.T) {
 	}
 
 	ns2 := &v1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:   "team-beta",
-			Labels: map[string]string{"team": "beta"},
-		},
+		Name:   "team-beta",
+		Labels: map[string]string{"team": "beta"},
 	}
 	if err := k8sClient.Create(ctx, ns2); err != nil {
 		t.Fatalf("failed to create namespace: %v", err)
@@ -593,7 +579,7 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 	t.Cleanup(func() { k8sClient.Delete(ctx, gc) })
 
 	svc := &v1.Service{
-		ObjectMeta: metav1.ObjectMeta{Name: "web-svc", Namespace: "default"},
+		Name: "web-svc", Namespace: "default",
 		Spec: v1.ServiceSpec{Ports: []v1.ServicePort{
 			{Name: "http", Port: 80},
 			{Name: "https", Port: 443},
@@ -710,7 +696,7 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 
 		proxyType := "socks"
 		policy := &cfv1alpha1.CloudflareOriginPolicy{
-			ObjectMeta: metav1.ObjectMeta{Name: "integ-origin-pol", Namespace: "default"},
+			Name: "integ-origin-pol", Namespace: "default",
 			Spec: cfv1alpha1.CloudflareOriginPolicySpec{
 				TargetRefs: []gwapiv1.LocalPolicyTargetReference{{
 					Group: gwapiv1.GroupName,
@@ -777,7 +763,7 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 		// then an exact path. After the precedence sort, the exact rule must come
 		// first so Cloudflare's first-match evaluation serves /api/health to it.
 		route := &gwapiv1.HTTPRoute{
-			ObjectMeta: metav1.ObjectMeta{Name: "integ-route-order", Namespace: "default"},
+			Name: "integ-route-order", Namespace: "default",
 			Spec: gwapiv1.HTTPRouteSpec{
 				CommonRouteSpec: gwapiv1.CommonRouteSpec{
 					ParentRefs: []gwapiv1.ParentReference{{Group: &gwGroup, Kind: &gwKind, Name: gwapiv1.ObjectName(gw.Name)}},
@@ -788,9 +774,8 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 						{Path: &gwapiv1.HTTPPathMatch{Type: &prefix, Value: &rootPath}},
 						{Path: &gwapiv1.HTTPPathMatch{Type: &exact, Value: &apiHealth}},
 					},
-					BackendRefs: []gwapiv1.HTTPBackendRef{{BackendRef: gwapiv1.BackendRef{
-						BackendObjectReference: gwapiv1.BackendObjectReference{Name: "web-svc", Port: &port},
-					}}},
+					BackendRefs: []gwapiv1.HTTPBackendRef{{
+						Name: "web-svc", Port: &port}},
 				}},
 			},
 		}
@@ -801,7 +786,7 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 
 		socks := "socks"
 		policy := &cfv1alpha1.CloudflareOriginPolicy{
-			ObjectMeta: metav1.ObjectMeta{Name: "integ-origin-order", Namespace: "default"},
+			Name: "integ-origin-order", Namespace: "default",
 			Spec: cfv1alpha1.CloudflareOriginPolicySpec{
 				TargetRefs: []gwapiv1.LocalPolicyTargetReference{{
 					Group: gwapiv1.GroupName, Kind: "HTTPRoute", Name: gwapiv1.ObjectName(route.Name),
@@ -870,7 +855,7 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 
 		// A header match is a dimension Cloudflare can't enforce.
 		route := &gwapiv1.HTTPRoute{
-			ObjectMeta: metav1.ObjectMeta{Name: "integ-route-unsupported", Namespace: "default"},
+			Name: "integ-route-unsupported", Namespace: "default",
 			Spec: gwapiv1.HTTPRouteSpec{
 				CommonRouteSpec: gwapiv1.CommonRouteSpec{
 					ParentRefs: []gwapiv1.ParentReference{{Group: &gwGroup, Kind: &gwKind, Name: gwapiv1.ObjectName(gw.Name)}},
@@ -880,9 +865,8 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 					Matches: []gwapiv1.HTTPRouteMatch{{
 						Headers: []gwapiv1.HTTPHeaderMatch{{Name: gwapiv1.HTTPHeaderName("X-Canary"), Value: "yes"}},
 					}},
-					BackendRefs: []gwapiv1.HTTPBackendRef{{BackendRef: gwapiv1.BackendRef{
-						BackendObjectReference: gwapiv1.BackendObjectReference{Name: "web-svc", Port: &port},
-					}}},
+					BackendRefs: []gwapiv1.HTTPBackendRef{{
+						Name: "web-svc", Port: &port}},
 				}},
 			},
 		}
@@ -956,8 +940,8 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 		}, 10*time.Second, 100*time.Millisecond, "route with a missing Service should report BackendNotFound")
 
 		late := &v1.Service{
-			ObjectMeta: metav1.ObjectMeta{Name: "no-such-svc", Namespace: "default"},
-			Spec:       v1.ServiceSpec{Ports: []v1.ServicePort{{Port: 80}}},
+			Name: "no-such-svc", Namespace: "default",
+			Spec: v1.ServiceSpec{Ports: []v1.ServicePort{{Port: 80}}},
 		}
 		if err := k8sClient.Create(ctx, late); err != nil {
 			t.Fatal(err)
@@ -1018,31 +1002,28 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 		tlsPort, tcpPort := gwapiv1.PortNumber(443), gwapiv1.PortNumber(5432)
 		tlsSection, tcpSection := gwapiv1.SectionName("tls"), gwapiv1.SectionName("tcp")
 		tlsRoute := &gwapiv1.TLSRoute{
-			ObjectMeta: metav1.ObjectMeta{Name: "integ-tls", Namespace: "default"},
+			Name: "integ-tls", Namespace: "default",
 			Spec: gwapiv1.TLSRouteSpec{
 				CommonRouteSpec: gwapiv1.CommonRouteSpec{ParentRefs: []gwapiv1.ParentReference{{Name: gwapiv1.ObjectName(gw.Name), SectionName: &tlsSection}}},
 				Hostnames:       []gwapiv1.Hostname{"secure.example.com"},
-				Rules: []gwapiv1.TLSRouteRule{{BackendRefs: []gwapiv1.BackendRef{{BackendObjectReference: gwapiv1.BackendObjectReference{
-					Name: "web-svc", Port: &tlsPort,
-				}}}}},
+				Rules: []gwapiv1.TLSRouteRule{{BackendRefs: []gwapiv1.BackendRef{{
+					Name: "web-svc", Port: &tlsPort}}}},
 			},
 		}
 		tcpRoute := &gwapiv1.TCPRoute{
-			ObjectMeta: metav1.ObjectMeta{Name: "integ-tcp", Namespace: "default"},
+			Name: "integ-tcp", Namespace: "default",
 			Spec: gwapiv1.TCPRouteSpec{
 				CommonRouteSpec: gwapiv1.CommonRouteSpec{ParentRefs: []gwapiv1.ParentReference{{Name: gwapiv1.ObjectName(gw.Name), SectionName: &tcpSection}}},
-				Rules: []gwapiv1.TCPRouteRule{{BackendRefs: []gwapiv1.BackendRef{{BackendObjectReference: gwapiv1.BackendObjectReference{
-					Name: "web-svc", Port: &tcpPort,
-				}}}}},
+				Rules: []gwapiv1.TCPRouteRule{{BackendRefs: []gwapiv1.BackendRef{{
+					Name: "web-svc", Port: &tcpPort}}}},
 			},
 		}
 		systemCA := gwapiv1.WellKnownCACertificatesSystem
 		policy := &gwapiv1.BackendTLSPolicy{
-			ObjectMeta: metav1.ObjectMeta{Name: "integ-backend-tls", Namespace: "default"},
+			Name: "integ-backend-tls", Namespace: "default",
 			Spec: gwapiv1.BackendTLSPolicySpec{
-				TargetRefs: []gwapiv1.LocalPolicyTargetReferenceWithSectionName{{LocalPolicyTargetReference: gwapiv1.LocalPolicyTargetReference{
-					Group: "", Kind: "Service", Name: "web-svc",
-				}}},
+				TargetRefs: []gwapiv1.LocalPolicyTargetReferenceWithSectionName{{
+					Group: "", Kind: "Service", Name: "web-svc"}},
 				Validation: gwapiv1.BackendTLSPolicyValidation{Hostname: "backend.example.net", WellKnownCACertificates: &systemCA},
 			},
 		}
@@ -1096,14 +1077,14 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 		}
 		t.Cleanup(func() { k8sClient.Delete(ctx, gw) })
 
-		ns := &v1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "integ-svc-backends"}}
+		ns := &v1.Namespace{Name: "integ-svc-backends"}
 		if err := k8sClient.Create(ctx, ns); err != nil && !apierrors.IsAlreadyExists(err) {
 			t.Fatalf("failed to create namespace: %v", err)
 		}
 
 		svc := &v1.Service{
-			ObjectMeta: metav1.ObjectMeta{Name: "remote-svc", Namespace: ns.Name},
-			Spec:       v1.ServiceSpec{Ports: []v1.ServicePort{{Port: 80}}},
+			Name: "remote-svc", Namespace: ns.Name,
+			Spec: v1.ServiceSpec{Ports: []v1.ServicePort{{Port: 80}}},
 		}
 		if err := k8sClient.Create(ctx, svc); err != nil {
 			t.Fatalf("failed to create Service: %v", err)
@@ -1138,7 +1119,7 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 		// Creating the grant afterwards must start serving the route on its own,
 		// which only happens because the controller watches ReferenceGrant.
 		grant := &gwapiv1.ReferenceGrant{
-			ObjectMeta: metav1.ObjectMeta{Name: "allow-default-svc", Namespace: ns.Name},
+			Name: "allow-default-svc", Namespace: ns.Name,
 			Spec: gwapiv1.ReferenceGrantSpec{
 				From: []gwapiv1.ReferenceGrantFrom{{
 					Group:     gwapiv1.GroupName,
@@ -1175,7 +1156,7 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 
 		matchSNI := true
 		policy := &cfv1alpha1.CloudflareOriginPolicy{
-			ObjectMeta: metav1.ObjectMeta{Name: "integ-xbackend-origin", Namespace: "default"},
+			Name: "integ-xbackend-origin", Namespace: "default",
 			Spec: cfv1alpha1.CloudflareOriginPolicySpec{
 				TargetRefs:     []gwapiv1.LocalPolicyTargetReference{{Group: gwapiv1.GroupName, Kind: "Gateway", Name: gwapiv1.ObjectName(gw.Name)}},
 				MatchSNIToHost: &matchSNI,
@@ -1188,7 +1169,7 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 
 		systemCA := gwapiv1.WellKnownCACertificatesSystem
 		xb := &apisxv1alpha1.XBackend{
-			ObjectMeta: metav1.ObjectMeta{Name: "integ-openai", Namespace: "default"},
+			Name: "integ-openai", Namespace: "default",
 			Spec: apisxv1alpha1.BackendSpec{
 				Type:             apisxv1alpha1.BackendTypeExternalHostname,
 				Port:             apisxv1alpha1.BackendPort{Number: 443},
@@ -1213,13 +1194,9 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 		route.Spec.Hostnames = []gwapiv1.Hostname{"proxy.example.com"}
 		route.Spec.Rules = []gwapiv1.HTTPRouteRule{{
 			BackendRefs: []gwapiv1.HTTPBackendRef{{
-				BackendRef: gwapiv1.BackendRef{
-					BackendObjectReference: gwapiv1.BackendObjectReference{
-						Group: &xbGroup,
-						Kind:  &xbKind,
-						Name:  "integ-openai",
-					},
-				},
+				Group: &xbGroup,
+				Kind:  &xbKind,
+				Name:  "integ-openai",
 			}},
 		}}
 		if err := k8sClient.Create(ctx, route); err != nil {
@@ -1311,7 +1288,7 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 		systemCA := gwapiv1.WellKnownCACertificatesSystem
 		makeXB := func(ns string) *apisxv1alpha1.XBackend {
 			return &apisxv1alpha1.XBackend{
-				ObjectMeta: metav1.ObjectMeta{Name: "integ-xns-backend", Namespace: ns},
+				Name: "integ-xns-backend", Namespace: ns,
 				Spec: apisxv1alpha1.BackendSpec{
 					Type:             apisxv1alpha1.BackendTypeExternalHostname,
 					Port:             apisxv1alpha1.BackendPort{Number: 443},
@@ -1335,14 +1312,10 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 			route.Spec.Hostnames = []gwapiv1.Hostname{gwapiv1.Hostname(hostname)}
 			route.Spec.Rules = []gwapiv1.HTTPRouteRule{{
 				BackendRefs: []gwapiv1.HTTPBackendRef{{
-					BackendRef: gwapiv1.BackendRef{
-						BackendObjectReference: gwapiv1.BackendObjectReference{
-							Group:     &xbGroup,
-							Kind:      &xbKind,
-							Namespace: &ns,
-							Name:      "integ-xns-backend",
-						},
-					},
+					Group:     &xbGroup,
+					Kind:      &xbKind,
+					Namespace: &ns,
+					Name:      "integ-xns-backend",
 				}},
 			}}
 			return route
@@ -1365,7 +1338,7 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 
 		// Scenario A: no ReferenceGrant in the backend namespace. The cross-namespace
 		// XBackend ref must be denied -> ResolvedRefs=False, reason RefNotPermitted.
-		nsNoGrant := &v1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "integ-xb-nogrant"}}
+		nsNoGrant := &v1.Namespace{Name: "integ-xb-nogrant"}
 		if err := k8sClient.Create(ctx, nsNoGrant); err != nil {
 			t.Fatalf("failed to create namespace: %v", err)
 		}
@@ -1392,7 +1365,7 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 		// ResolvedRefs=True. (Grant-after-route is covered by
 		// ServiceBackendCrossNamespaceGrant, which exercises the ReferenceGrant
 		// watch directly.)
-		nsGrant := &v1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "integ-xb-grant"}}
+		nsGrant := &v1.Namespace{Name: "integ-xb-grant"}
 		if err := k8sClient.Create(ctx, nsGrant); err != nil {
 			t.Fatalf("failed to create namespace: %v", err)
 		}
@@ -1405,7 +1378,7 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 		t.Cleanup(func() { k8sClient.Delete(ctx, xbGrant) })
 
 		grant := &gwapiv1.ReferenceGrant{
-			ObjectMeta: metav1.ObjectMeta{Name: "allow-xbackend", Namespace: nsGrant.Name},
+			Name: "allow-xbackend", Namespace: nsGrant.Name,
 			Spec: gwapiv1.ReferenceGrantSpec{
 				From: []gwapiv1.ReferenceGrantFrom{{
 					Group:     "gateway.networking.k8s.io",
@@ -1506,7 +1479,7 @@ func TestIntegration_ControllerLoop(t *testing.T) {
 		mock.mu.Unlock()
 
 		otherGC := &gwapiv1.GatewayClass{
-			ObjectMeta: metav1.ObjectMeta{Name: "integ-gc-other"},
+			Name: "integ-gc-other",
 			Spec: gwapiv1.GatewayClassSpec{
 				ControllerName: "other-controller/not-ours",
 			},

@@ -2,6 +2,7 @@ package controller
 
 import (
 	"fmt"
+	"slices"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -202,10 +203,8 @@ var routeKinds = []string{"HTTPRoute", "GRPCRoute", "TLSRoute", "TCPRoute"}
 // targetsAnyRoute reports whether any targetRef points at a route kind.
 func targetsAnyRoute(refs []gwapiv1.LocalPolicyTargetReference) bool {
 	for _, ref := range refs {
-		for _, k := range routeKinds {
-			if string(ref.Kind) == k {
-				return true
-			}
+		if slices.Contains(routeKinds, string(ref.Kind)) {
+			return true
 		}
 	}
 	return false

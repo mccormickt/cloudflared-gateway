@@ -6,15 +6,14 @@ import (
 
 	cfv1alpha1 "github.com/mccormickt/cloudflared-gateway/api/v1alpha1"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
 func makeTunnelConfig(name, namespace string, spec cfv1alpha1.CloudflareTunnelConfigSpec) *cfv1alpha1.CloudflareTunnelConfig {
 	return &cfv1alpha1.CloudflareTunnelConfig{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
-		Spec:       spec,
+		Name: name, Namespace: namespace,
+		Spec: spec,
 	}
 }
 
@@ -30,7 +29,7 @@ func gcParametersRef(name, namespace string) *gwapiv1.ParametersReference {
 
 func TestResolveTunnelConfig_GatewayClassDefault(t *testing.T) {
 	scheme := testScheme()
-	cfg := makeTunnelConfig("cfg", "default", cfv1alpha1.CloudflareTunnelConfigSpec{Replicas: ptr(int32(3))})
+	cfg := makeTunnelConfig("cfg", "default", cfv1alpha1.CloudflareTunnelConfigSpec{Replicas: new(int32(3))})
 	gw := makeGateway("gw", "default")
 	gc := makeGatewayClass()
 	gc.Spec.ParametersRef = gcParametersRef("cfg", "default")
@@ -47,10 +46,10 @@ func TestResolveTunnelConfig_GatewayClassDefault(t *testing.T) {
 func TestResolveTunnelConfig_GatewayOverridesClass(t *testing.T) {
 	scheme := testScheme()
 	classCfg := makeTunnelConfig("class-cfg", "default", cfv1alpha1.CloudflareTunnelConfigSpec{
-		Replicas: ptr(int32(3)),
-		Image:    ptr("class-image"),
+		Replicas: new(int32(3)),
+		Image:    new("class-image"),
 	})
-	gwCfg := makeTunnelConfig("gw-cfg", "default", cfv1alpha1.CloudflareTunnelConfigSpec{Replicas: ptr(int32(5))})
+	gwCfg := makeTunnelConfig("gw-cfg", "default", cfv1alpha1.CloudflareTunnelConfigSpec{Replicas: new(int32(5))})
 	gw := makeGateway("gw", "default")
 	gw.Spec.Infrastructure = &gwapiv1.GatewayInfrastructure{
 		ParametersRef: &gwapiv1.LocalParametersReference{
@@ -101,10 +100,10 @@ func TestResolveTunnelConfig_InvalidRefUsesDefaults(t *testing.T) {
 func TestBuildCloudflaredDeployment_Overlay(t *testing.T) {
 	gw := makeGateway("gw", "default")
 	cfg := &cfv1alpha1.CloudflareTunnelConfigSpec{
-		Replicas:    ptr(int32(4)),
-		Image:       ptr("custom/cloudflared:test"),
-		LogLevel:    ptr("debug"),
-		MetricsPort: ptr(int32(9000)),
+		Replicas:    new(int32(4)),
+		Image:       new("custom/cloudflared:test"),
+		LogLevel:    new("debug"),
+		MetricsPort: new(int32(9000)),
 	}
 
 	d := BuildCloudflaredDeployment(gw, "secret", cfg)

@@ -2,6 +2,7 @@ package controller
 
 import (
 	"fmt"
+	"maps"
 
 	cfv1alpha1 "github.com/mccormickt/cloudflared-gateway/api/v1alpha1"
 
@@ -57,19 +58,17 @@ func BuildCloudflaredDeployment(gw *gwapiv1.Gateway, secretName string, cfg *cfv
 	labels := map[string]string{"app": deployName}
 
 	deployment := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      deployName,
-			Namespace: gw.Namespace,
-			Labels:    labels,
-			OwnerReferences: []metav1.OwnerReference{{
-				APIVersion:         "gateway.networking.k8s.io/v1",
-				Kind:               "Gateway",
-				Name:               gw.Name,
-				UID:                gw.UID,
-				Controller:         boolPtr(true),
-				BlockOwnerDeletion: boolPtr(true),
-			}},
-		},
+		Name:      deployName,
+		Namespace: gw.Namespace,
+		Labels:    labels,
+		OwnerReferences: []metav1.OwnerReference{{
+			APIVersion:         "gateway.networking.k8s.io/v1",
+			Kind:               "Gateway",
+			Name:               gw.Name,
+			UID:                gw.UID,
+			Controller:         new(true),
+			BlockOwnerDeletion: new(true),
+		}},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replicas,
 			Selector: &metav1.LabelSelector{
@@ -85,10 +84,10 @@ func BuildCloudflaredDeployment(gw *gwapiv1.Gateway, secretName string, cfg *cfv
 						Image: image,
 						Args:  args,
 						SecurityContext: &v1.SecurityContext{
-							AllowPrivilegeEscalation: boolPtr(false),
-							RunAsNonRoot:             boolPtr(true),
-							RunAsUser:                int64Ptr(65532),
-							RunAsGroup:               int64Ptr(65532),
+							AllowPrivilegeEscalation: new(false),
+							RunAsNonRoot:             new(true),
+							RunAsUser:                new(int64(65532)),
+							RunAsGroup:               new(int64(65532)),
 							Capabilities: &v1.Capabilities{
 								Drop: []v1.Capability{"ALL"},
 							},
@@ -100,10 +99,8 @@ func BuildCloudflaredDeployment(gw *gwapiv1.Gateway, secretName string, cfg *cfv
 							Name: "TUNNEL_TOKEN",
 							ValueFrom: &v1.EnvVarSource{
 								SecretKeyRef: &v1.SecretKeySelector{
-									LocalObjectReference: v1.LocalObjectReference{
-										Name: secretName,
-									},
-									Key: tunnelTokenKey,
+									Name: secretName,
+									Key:  tunnelTokenKey,
 								},
 							},
 						}},
@@ -137,16 +134,12 @@ func BuildCloudflaredDeployment(gw *gwapiv1.Gateway, secretName string, cfg *cfv
 			container.Resources = *cfg.Resources
 		}
 		pod := &deployment.Spec.Template
-		for k, v := range cfg.PodLabels {
-			pod.Labels[k] = v
-		}
+		maps.Copy(pod.Labels, cfg.PodLabels)
 		if len(cfg.PodAnnotations) > 0 {
 			if pod.Annotations == nil {
 				pod.Annotations = make(map[string]string)
 			}
-			for k, v := range cfg.PodAnnotations {
-				pod.Annotations[k] = v
-			}
+			maps.Copy(pod.Annotations, cfg.PodAnnotations)
 		}
 		pod.Spec.NodeSelector = cfg.NodeSelector
 		pod.Spec.Tolerations = cfg.Tolerations

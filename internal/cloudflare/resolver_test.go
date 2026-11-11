@@ -13,13 +13,9 @@ func xbackendHTTPRef(name string) gwapiv1.HTTPBackendRef {
 	group := gwapiv1.Group(xbackendGroup)
 	kind := gwapiv1.Kind("XBackend")
 	return gwapiv1.HTTPBackendRef{
-		BackendRef: gwapiv1.BackendRef{
-			BackendObjectReference: gwapiv1.BackendObjectReference{
-				Group: &group,
-				Kind:  &kind,
-				Name:  gwapiv1.ObjectName(name),
-			},
-		},
+		Group: &group,
+		Kind:  &kind,
+		Name:  gwapiv1.ObjectName(name),
 	}
 }
 
@@ -144,12 +140,11 @@ func TestBuildTLSIngressRules_XBackendSuppressesDefaultNoTLSVerify(t *testing.T)
 
 	group := gwapiv1.Group(xbackendGroup)
 	kind := gwapiv1.Kind("XBackend")
-	xbRef := gwapiv1.BackendRef{BackendObjectReference: gwapiv1.BackendObjectReference{
-		Group: &group, Kind: &kind, Name: "secure",
-	}}
-	route := gwapiv1.TLSRoute{}
-	route.Name = "tls-ext"
-	route.Namespace = "default"
+	xbRef := gwapiv1.BackendRef{
+		Group: &group, Kind: &kind, Name: "secure"}
+	route := gwapiv1.TLSRoute{
+		Name:      "tls-ext",
+		Namespace: "default"}
 	route.Spec.Hostnames = []gwapiv1.Hostname{hostname("secure.example.net")}
 	route.Spec.Rules = []gwapiv1.TLSRouteRule{{BackendRefs: []gwapiv1.BackendRef{xbRef}}}
 
@@ -171,10 +166,10 @@ func TestBuildTLSIngressRules_XBackendSuppressesDefaultNoTLSVerify(t *testing.T)
 }
 
 func TestBuildTLSIngressRules_NativeServiceKeepsNoTLSVerify(t *testing.T) {
-	ref := gwapiv1.BackendRef{BackendObjectReference: gwapiv1.BackendObjectReference{Name: "tls-svc"}}
-	route := gwapiv1.TLSRoute{}
-	route.Name = "tls"
-	route.Namespace = "default"
+	ref := gwapiv1.BackendRef{Name: "tls-svc"}
+	route := gwapiv1.TLSRoute{
+		Name:      "tls",
+		Namespace: "default"}
 	route.Spec.Hostnames = []gwapiv1.Hostname{hostname("svc.example.com")}
 	route.Spec.Rules = []gwapiv1.TLSRouteRule{{BackendRefs: []gwapiv1.BackendRef{ref}}}
 

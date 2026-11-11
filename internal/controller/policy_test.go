@@ -12,11 +12,9 @@ import (
 
 func originPolicyTargeting(name string, created time.Time, targetKind, targetName string) cfv1alpha1.CloudflareOriginPolicy {
 	return cfv1alpha1.CloudflareOriginPolicy{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:              name,
-			Namespace:         "default",
-			CreationTimestamp: metav1.NewTime(created),
-		},
+		Name:              name,
+		Namespace:         "default",
+		CreationTimestamp: metav1.NewTime(created),
 		Spec: cfv1alpha1.CloudflareOriginPolicySpec{
 			TargetRefs: []gwapiv1.LocalPolicyTargetReference{{
 				Group: gwapiv1.GroupName,
@@ -60,7 +58,7 @@ func TestSetGatewayPolicyAffected_PerKindConditions(t *testing.T) {
 		originType = "cloudflare.jan0ski.net/CloudflareOriginPolicyAffected"
 	)
 
-	gw := &gwapiv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default", Generation: 3}}
+	gw := &gwapiv1.Gateway{Name: "gw", Namespace: "default", Generation: 3}
 
 	// Access-affected only: both conditions present, named per-kind per GEP-713.
 	setGatewayPolicyAffected(gw, true, false)

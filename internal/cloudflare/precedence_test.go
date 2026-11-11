@@ -108,7 +108,7 @@ func TestSortByPrecedence_Orders(t *testing.T) {
 
 	label := func(s string, spec MatchSpecificity) BuiltRule {
 		return BuiltRule{
-			IngressRule:  IngressRule{Service: s},
+			Service:      s,
 			RouteCreated: t0, RouteNamespace: "ns", RouteName: "r",
 			Specificity: spec,
 		}

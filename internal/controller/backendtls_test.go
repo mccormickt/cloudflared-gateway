@@ -6,24 +6,19 @@ import (
 
 	cfclient "github.com/mccormickt/cloudflared-gateway/internal/cloudflare"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
 func makeBackendTLSPolicy(name, namespace, serviceName string, hostname string, wellKnownCA *gwapiv1.WellKnownCACertificatesType) *gwapiv1.BackendTLSPolicy {
 	policy := &gwapiv1.BackendTLSPolicy{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-		},
+		Name:      name,
+		Namespace: namespace,
 		Spec: gwapiv1.BackendTLSPolicySpec{
 			TargetRefs: []gwapiv1.LocalPolicyTargetReferenceWithSectionName{{
-				LocalPolicyTargetReference: gwapiv1.LocalPolicyTargetReference{
-					Group: "",
-					Kind:  "Service",
-					Name:  gwapiv1.ObjectName(serviceName),
-				},
+				Group: "",
+				Kind:  "Service",
+				Name:  gwapiv1.ObjectName(serviceName),
 			}},
 			Validation: gwapiv1.BackendTLSPolicyValidation{
 				Hostname: gwapiv1.PreciseHostname(hostname),
@@ -177,15 +172,13 @@ func TestApplyBackendTLSPolicies(t *testing.T) {
 
 	p := gwapiv1.PortNumber(8443)
 	tlsRoutes := []gwapiv1.TLSRoute{{
-		ObjectMeta: metav1.ObjectMeta{Name: "tls-route", Namespace: "default"},
+		Name: "tls-route", Namespace: "default",
 		Spec: gwapiv1.TLSRouteSpec{
 			Hostnames: []gwapiv1.Hostname{"secure.example.com"},
 			Rules: []gwapiv1.TLSRouteRule{{
 				BackendRefs: []gwapiv1.BackendRef{{
-					BackendObjectReference: gwapiv1.BackendObjectReference{
-						Name: "tls-svc",
-						Port: &p,
-					},
+					Name: "tls-svc",
+					Port: &p,
 				}},
 			}},
 		},
@@ -193,13 +186,11 @@ func TestApplyBackendTLSPolicies(t *testing.T) {
 
 	noTLS := true
 	rules := []cfclient.BuiltRule{{
-		IngressRule: cfclient.IngressRule{
-			Hostname:      "secure.example.com",
-			Service:       "https://tls-svc.default:8443",
-			OriginRequest: &cfclient.OriginRequest{NoTLSVerify: &noTLS},
-		},
-		RouteKind: "TLSRoute",
-		RouteName: "tls-route",
+		Hostname:      "secure.example.com",
+		Service:       "https://tls-svc.default:8443",
+		OriginRequest: &cfclient.OriginRequest{NoTLSVerify: &noTLS},
+		RouteKind:     "TLSRoute",
+		RouteName:     "tls-route",
 	}}
 
 	result, err := r.applyBackendTLSPolicies(context.Background(), rules, tlsRoutes)

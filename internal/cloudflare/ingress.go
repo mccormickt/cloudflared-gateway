@@ -124,11 +124,9 @@ func BuildTLSIngressRules(routes []gwapiv1.TLSRoute, resolve BackendResolver) []
 				}
 				exact, length := hostnameSpecificity(host)
 				rules = append(rules, BuiltRule{
-					IngressRule: IngressRule{
-						Hostname:      host,
-						Service:       service,
-						OriginRequest: cloneOriginRequest(origin),
-					},
+					Hostname:       host,
+					Service:        service,
+					OriginRequest:  cloneOriginRequest(origin),
 					RouteKind:      "TLSRoute",
 					RouteNamespace: routeNS,
 					RouteName:      route.Name,
@@ -164,7 +162,7 @@ func BuildTCPIngressRules(routes []gwapiv1.TCPRoute, resolve BackendResolver) []
 			rule := &route.Spec.Rules[ri]
 			service, backendOrigin, _ := backendRefToTCPService(rule.BackendRefs, routeNS, resolve)
 			rules = append(rules, BuiltRule{
-				IngressRule:    IngressRule{Service: service, OriginRequest: cloneOriginRequest(backendOrigin)},
+				Service: service, OriginRequest: cloneOriginRequest(backendOrigin),
 				RouteKind:      "TCPRoute",
 				RouteNamespace: routeNS,
 				RouteName:      route.Name,
@@ -187,12 +185,10 @@ func fanOutHTTPFamily(kind, name, routeNS string, created time.Time, ruleIndex i
 	emit := func(host string, m builtMatch) {
 		exact, length := hostnameSpecificity(host)
 		rules = append(rules, BuiltRule{
-			IngressRule: IngressRule{
-				Hostname:      host,
-				Path:          m.path,
-				Service:       service,
-				OriginRequest: cloneOriginRequest(originReq),
-			},
+			Hostname:       host,
+			Path:           m.path,
+			Service:        service,
+			OriginRequest:  cloneOriginRequest(originReq),
 			RouteKind:      kind,
 			RouteNamespace: routeNS,
 			RouteName:      name,
@@ -239,8 +235,8 @@ func hostnameSpecificity(h string) (exact bool, length int) {
 	if h == "" {
 		return false, 0
 	}
-	if strings.HasPrefix(h, "*") {
-		return false, len(strings.TrimPrefix(h, "*"))
+	if after, ok := strings.CutPrefix(h, "*"); ok {
+		return false, len(after)
 	}
 	return true, len(h)
 }

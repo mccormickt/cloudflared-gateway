@@ -10,7 +10,6 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -112,7 +111,7 @@ func TestE2E_GatewayClassCreation(t *testing.T) {
 			utilruntime.Must(gwapiv1.Install(c.Scheme()))
 
 			gc := &gwapiv1.GatewayClass{
-				ObjectMeta: metav1.ObjectMeta{Name: "e2e-cloudflare-tunnel"},
+				Name: "e2e-cloudflare-tunnel",
 				Spec: gwapiv1.GatewayClassSpec{
 					ControllerName: gwapiv1.GatewayController(ctrl.ControllerName),
 				},
@@ -138,7 +137,7 @@ func TestE2E_GatewayClassCreation(t *testing.T) {
 		Teardown(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			c, _ := client.New(cfg.Client().RESTConfig(), client.Options{})
 			utilruntime.Must(gwapiv1.Install(c.Scheme()))
-			c.Delete(ctx, &gwapiv1.GatewayClass{ObjectMeta: metav1.ObjectMeta{Name: "e2e-cloudflare-tunnel"}})
+			c.Delete(ctx, &gwapiv1.GatewayClass{Name: "e2e-cloudflare-tunnel"})
 			return ctx
 		}).
 		Feature()
@@ -157,7 +156,7 @@ func TestE2E_GatewayAndHTTPRoute(t *testing.T) {
 
 			// Create GatewayClass
 			gc := &gwapiv1.GatewayClass{
-				ObjectMeta: metav1.ObjectMeta{Name: "e2e-tunnel-class"},
+				Name: "e2e-tunnel-class",
 				Spec: gwapiv1.GatewayClassSpec{
 					ControllerName: gwapiv1.GatewayController(ctrl.ControllerName),
 				},
@@ -169,7 +168,7 @@ func TestE2E_GatewayAndHTTPRoute(t *testing.T) {
 			// Create Gateway
 			from := gwapiv1.NamespacesFromSame
 			gw := &gwapiv1.Gateway{
-				ObjectMeta: metav1.ObjectMeta{Name: "e2e-tunnel", Namespace: testNamespace},
+				Name: "e2e-tunnel", Namespace: testNamespace,
 				Spec: gwapiv1.GatewaySpec{
 					GatewayClassName: "e2e-tunnel-class",
 					Listeners: []gwapiv1.Listener{{
@@ -188,7 +187,7 @@ func TestE2E_GatewayAndHTTPRoute(t *testing.T) {
 
 			// Create backend Service
 			svc := &v1.Service{
-				ObjectMeta: metav1.ObjectMeta{Name: "web-svc", Namespace: testNamespace},
+				Name: "web-svc", Namespace: testNamespace,
 				Spec: v1.ServiceSpec{
 					Ports:    []v1.ServicePort{{Port: 80}},
 					Selector: map[string]string{"app": "web"},
@@ -203,7 +202,7 @@ func TestE2E_GatewayAndHTTPRoute(t *testing.T) {
 			gwKind := gwapiv1.Kind("Gateway")
 			port := gwapiv1.PortNumber(80)
 			route := &gwapiv1.HTTPRoute{
-				ObjectMeta: metav1.ObjectMeta{Name: "e2e-route", Namespace: testNamespace},
+				Name: "e2e-route", Namespace: testNamespace,
 				Spec: gwapiv1.HTTPRouteSpec{
 					CommonRouteSpec: gwapiv1.CommonRouteSpec{
 						ParentRefs: []gwapiv1.ParentReference{{
@@ -215,12 +214,8 @@ func TestE2E_GatewayAndHTTPRoute(t *testing.T) {
 					Hostnames: []gwapiv1.Hostname{"e2e.example.com"},
 					Rules: []gwapiv1.HTTPRouteRule{{
 						BackendRefs: []gwapiv1.HTTPBackendRef{{
-							BackendRef: gwapiv1.BackendRef{
-								BackendObjectReference: gwapiv1.BackendObjectReference{
-									Name: "web-svc",
-									Port: &port,
-								},
-							},
+							Name: "web-svc",
+							Port: &port,
 						}},
 					}},
 				},
@@ -274,11 +269,11 @@ func TestE2E_GatewayAndHTTPRoute(t *testing.T) {
 		Teardown(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			c, _ := client.New(cfg.Client().RESTConfig(), client.Options{})
 			utilruntime.Must(gwapiv1.Install(c.Scheme()))
-			c.Delete(ctx, &gwapiv1.HTTPRoute{ObjectMeta: metav1.ObjectMeta{Name: "e2e-route", Namespace: testNamespace}})
-			c.Delete(ctx, &gwapiv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: "e2e-tunnel", Namespace: testNamespace}})
-			c.Delete(ctx, &gwapiv1.GatewayClass{ObjectMeta: metav1.ObjectMeta{Name: "e2e-tunnel-class"}})
-			c.Delete(ctx, &v1.Service{ObjectMeta: metav1.ObjectMeta{Name: "web-svc", Namespace: testNamespace}})
-			c.Delete(ctx, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "cloudflared-e2e-tunnel", Namespace: testNamespace}})
+			c.Delete(ctx, &gwapiv1.HTTPRoute{Name: "e2e-route", Namespace: testNamespace})
+			c.Delete(ctx, &gwapiv1.Gateway{Name: "e2e-tunnel", Namespace: testNamespace})
+			c.Delete(ctx, &gwapiv1.GatewayClass{Name: "e2e-tunnel-class"})
+			c.Delete(ctx, &v1.Service{Name: "web-svc", Namespace: testNamespace})
+			c.Delete(ctx, &appsv1.Deployment{Name: "cloudflared-e2e-tunnel", Namespace: testNamespace})
 			return ctx
 		}).
 		Feature()

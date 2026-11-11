@@ -15,10 +15,8 @@ import (
 
 func makeAccessPolicy(name, namespace, teamName string, required bool, audTags []string, targetKind, targetName string) *cfv1alpha1.CloudflareAccessPolicy {
 	return &cfv1alpha1.CloudflareAccessPolicy{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-		},
+		Name:      name,
+		Namespace: namespace,
 		Spec: cfv1alpha1.CloudflareAccessPolicySpec{
 			TargetRefs: []gwapiv1.LocalPolicyTargetReference{{
 				Group: gwapiv1.Group(gwapiv1.GroupName),
@@ -315,7 +313,7 @@ func TestPrunePolicyAncestorStatus_OnCleanup(t *testing.T) {
 	access := makeAccessPolicy("access", "default", "team", false, nil, "Gateway", "test-gw")
 	access.Status = staleGatewayAncestor(gw)
 	origin := &cfv1alpha1.CloudflareOriginPolicy{
-		ObjectMeta: metav1.ObjectMeta{Name: "origin", Namespace: "default"},
+		Name: "origin", Namespace: "default",
 		Spec: cfv1alpha1.CloudflareOriginPolicySpec{
 			TargetRefs: []gwapiv1.LocalPolicyTargetReference{{
 				Group: gwapiv1.GroupName, Kind: "Gateway", Name: "test-gw",
